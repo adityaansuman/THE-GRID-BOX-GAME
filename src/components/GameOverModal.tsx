@@ -1,0 +1,169 @@
+import React, { useEffect } from 'react';
+import { Player, GameRoom } from '../types';
+import { sound } from '../utils/audio';
+import confetti from 'canvas-confetti';
+import { Trophy, RotateCcw, Home, Crown } from 'lucide-react';
+
+interface GameOverModalProps {
+  room: GameRoom;
+  myPlayerId: string;
+  onPlayAgain: () => void;
+  onLeaveRoom: () => void;
+}
+
+export const GameOverModal: React.FC<GameOverModalProps> = ({
+  room,
+  myPlayerId,
+  onPlayAgain,
+  onLeaveRoom
+}) => {
+  if (room.state !== 'game_over') return null;
+
+  const sortedPlayers = [...room.players].sort((a, b) => b.score - a.score);
+  const winners = room.winners || [sortedPlayers[0]];
+  const isWinner = winners.some(w => w.id === myPlayerId);
+  const isHost = room.hostId === myPlayerId;
+
+  useEffect(() => {
+    sound.playVictoryFanfare();
+
+    // Gentle pastel confetti
+    const end = Date.now() + 2.5 * 1000;
+    const colors = ['#5BBFEA', '#FF8DA1', '#58C99E', '#FF9F68', '#A389D4', '#F5B83D'];
+
+    (function frame() {
+      confetti({
+        particleCount: 3,
+        angle: 60,
+        spread: 55,
+        origin: { x: 0 },
+        colors
+      });
+      confetti({
+        particleCount: 3,
+        angle: 120,
+        spread: 55,
+        origin: { x: 1 },
+        colors
+      });
+
+      if (Date.now() < end) {
+        requestAnimationFrame(frame);
+      }
+    })();
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-xs animate-fade-in select-none">
+      <div className="relative w-full max-w-lg bg-white border-2 border-[#EFEAE1] rounded-3xl shadow-xl p-6 text-[#3D352E] text-center">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-[#FFF9EC] border-2 border-[#FDE7B3] text-[#F5B83D] mb-3 shadow-xs">
+          <Trophy className="w-8 h-8" />
+        </div>
+
+        <h2 className="font-bubbly font-bold text-2xl text-[#3D352E] mb-1">
+          {winners.length > 1
+            ? "It's a Tie Game!"
+            : isWinner
+            ? 'Victory! You Won!'
+            : `${winners[0]?.name} Won!`}
+        </h2>
+
+        <p className="font-bubbly text-xs text-[#8C8074] mb-5">
+          All {room.totalBoxes} boxes captured · Grid {room.gridRows}×{room.gridCols}
+        </p>
+
+        {/* Podium Standings */}
+        <div className="space-y-2 mb-6">
+          {sortedPlayers.map((player, idx) => {
+            const isMe = player.id === myPlayerId;
+            const rank = idx + 1;
+            return (
+              <div
+                key={player.id}
+                className={`flex items-center justify-between p-3.5 rounded-2xl border-2 transition-all ${
+                  rank === 1
+                    ? 'bg-[#FFF9EC] border-[#FDE7B3] shadow-xs'
+                    : isMe
+                    ? 'bg-[#EAF6FD] border-[#5BBFEA]'
+                    : 'bg-[#FAF7F2] border-[#EFEAE1]'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-7 text-center font-bubbly font-bold text-base">
+                    {rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`}
+                  </div>
+
+                  <div
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl border shadow-xs"
+                    style={{
+                      borderColor: player.color,
+                      backgroundColor: `${player.color}18`
+                    }}
+                  >
+                    {player.avatar}
+                  </div>
+
+                  <div className="text-left">
+                    <div className="flex items-center gap-1.5 font-bubbly font-bold text-sm text-[#3D352E]">
+                      <span>{player.name}</span>
+                      {rank === 1 && <Crown className="w-3.5 h-3.5 text-[#F5B83D]" />}
+                      {isMe && (
+                        <span className="text-[10px] text-[#5BBFEA] font-bubbly">(You)</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-[#8C8074] font-bubbly">
+                      {Math.round((player.score / room.totalBoxes) * 100)}% of the grid
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-right">
+                  <div
+                    className="font-bubbly font-bold text-base"
+                    style={{ color: player.color }}
+                  >
+                    {player.score} Boxes
+                  </div>
+                  <div className="text-[10px] text-[#8C8074] font-mono">
+                    +{player.score * 10 + (rank === 1 ? 50 : 0)} pts
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Action Controls */}
+        <div className="flex items-center gap-3">
+          {isHost ? (
+            <button
+              onClick={() => {
+                sound.playClick();
+                onPlayAgain();
+              }}
+              className="flex-1 py-3.5 bg-[#5BBFEA] hover:bg-[#49B5E3] text-white font-bubbly font-bold text-xs rounded-2xl shadow-[0_4px_0_#3FA5D1,0_8px_16px_rgba(91,191,234,0.3)] transition-all active:translate-y-1 active:shadow-none flex items-center justify-center gap-2"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Play Again / Rematch
+            </button>
+          ) : (
+            <div className="flex-1 text-xs text-[#8C8074] py-3 font-bubbly">
+              Waiting for host to start rematch...
+            </div>
+          )}
+
+          <button
+            onClick={() => {
+              sound.playClick();
+              onLeaveRoom();
+            }}
+            className="px-5 py-3.5 bg-[#FAF7F2] hover:bg-[#F0EAE1] text-[#7A7067] font-bubbly font-bold text-xs rounded-2xl border-2 border-[#EFEAE1] transition-colors flex items-center gap-1.5"
+          >
+            <Home className="w-4 h-4" />
+            Leave to Menu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

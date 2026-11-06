@@ -1,0 +1,6 @@
+{
+  "name": "DotGrid.io - Multiplayer Dots & Boxes",
+  "description": "Real-time multiplayer Dots & Boxes game with skribbl.io-style lobbies, custom avatars, dynamic grid sizes, combo streaks, and global leaderboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
