@@ -218,8 +218,16 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
                         style={{ backgroundColor: p.color }}
                         title={`Line colour: ${p.color}`}
                       />
-                      <span className="text-[10px] text-[#8C8074]">
-                        {isMe ? 'You' : isTurn ? 'Turn Active' : 'Waiting'}
+                      <span className="text-[10px]">
+                        {p.isDisconnected ? (
+                          <span className="text-[#FF8DA1] font-bold animate-pulse">Disconnected (40s)</span>
+                        ) : isMe ? (
+                          <span className="text-[#5BBFEA] font-bold">You</span>
+                        ) : isTurn ? (
+                          <span className="text-[#5BBFEA] font-bold">Turn Active</span>
+                        ) : (
+                          <span className="text-[#8C8074]">Waiting</span>
+                        )}
                       </span>
                     </div>
                   </div>

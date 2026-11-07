@@ -1,0 +1,24 @@
+{
+  "usr_g_1794048175053_if10r": {
+    "id": "usr_g_1794048175053_if10r",
+    "username": "genuine_player",
+    "email": "genuine_player@gmail.com",
+    "passwordHash": "google_oauth_authenticated",
+    "displayName": "Genuine Player",
+    "color": "#5BBFEA",
+    "avatar": "⚡",
+    "createdAt": 1794048175053,
+    "lastLoginAt": 1794048175053,
+    "stats": {
+      "wins": 0,
+      "losses": 0,
+      "ties": 0,
+      "gamesPlayed": 0,
+      "boxesClaimed": 0,
+      "highestCombo": 0,
+      "totalScore": 0,
+      "winStreak": 0,
+      "bestWinStreak": 0
+    }
+  }
+}

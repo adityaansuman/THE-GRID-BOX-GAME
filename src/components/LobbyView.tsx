@@ -13,7 +13,8 @@ import {
   Users,
   Palette,
   Lock,
-  ArrowLeft
+  ArrowLeft,
+  AlertCircle
 } from 'lucide-react';
 
 interface LobbyViewProps {
@@ -24,7 +25,7 @@ interface LobbyViewProps {
   onSelectColor: (color: string) => void;
   onAddBot: (level: 'easy' | 'medium' | 'hard') => void;
   onRemoveBot: (botId: string) => void;
-  onUpdateSettings: (rows: number, cols: number, turnTime: number) => void;
+  onUpdateSettings: (rows: number, cols: number, turnTime: number, maxPlayers?: number) => void;
   onLeaveRoom: () => void;
 }
 
@@ -39,6 +40,12 @@ export const PASTEL_COLOR_CHOICES = [
   { name: 'Sage', hex: '#82C29B' },
   { name: 'Teal', hex: '#4DB6AC' },
   { name: 'Periwinkle', hex: '#7E97E8' },
+  { name: 'Coral', hex: '#E57373' },
+  { name: 'Orchid', hex: '#BA68C8' },
+  { name: 'Cyan', hex: '#4DD0E1' },
+  { name: 'Gold', hex: '#FFD54F' },
+  { name: 'Lime', hex: '#AED581' },
+  { name: 'Slate', hex: '#90A4AE' }
 ];
 
 const GRID_PRESETS = [
@@ -75,6 +82,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const isHost = room.hostId === myPlayerId;
   const myPlayer = room.players.find(p => p.id === myPlayerId);
   const canStart = room.players.length >= 2;
+  const isLargeParty = room.players.length > 4;
 
   const copyCode = () => {
     sound.playClick();
@@ -84,7 +92,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   };
 
   const handleColorClick = (hex: string) => {
-    // Check if another player in this lobby already has this color
     const isTaken = room.players.some(
       p => p.id !== myPlayerId && p.color.toLowerCase() === hex.toLowerCase()
     );
@@ -121,9 +128,12 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               <span className="text-[10px] bg-[#FAF5EE] text-[#7A7067] px-2.5 py-0.5 rounded-full font-bubbly border border-[#E8DFC8]">
                 {room.isPublic ? 'Public' : 'Private'}
               </span>
+              <span className="text-[10px] bg-[#EAF6FD] text-[#24485D] px-2.5 py-0.5 rounded-full font-bubbly border border-[#C5E7FA]">
+                Up to {room.maxPlayers} Players
+              </span>
             </div>
             <p className="text-xs text-[#8C8074]">
-              Share room code to invite friends
+              Share room code to invite friends · Max 8 players
             </p>
           </div>
         </div>
@@ -184,22 +194,22 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               )}
             </div>
 
-            {/* Connected Players Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {/* Connected Players Cards (up to 8 players) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto no-scrollbar pr-0.5">
               {room.players.map((p) => {
                 const isMe = p.id === myPlayerId;
                 return (
                   <div
                     key={p.id}
-                    className={`relative flex items-center justify-between p-3 rounded-2xl border-2 transition-all ${
+                    className={`relative flex items-center justify-between p-2.5 rounded-2xl border-2 transition-all ${
                       isMe
                         ? 'bg-[#FFFDFB] border-[#5BBFEA] shadow-xs ring-1 ring-[#5BBFEA]/20'
                         : 'bg-[#FAF7F2] border-[#EFEAE1]'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 overflow-hidden">
+                    <div className="flex items-center gap-2 overflow-hidden">
                       <div
-                        className="w-9 h-9 rounded-2xl flex items-center justify-center text-lg border shadow-xs shrink-0"
+                        className="w-8 h-8 rounded-xl flex items-center justify-center text-base border shadow-xs shrink-0"
                         style={{
                           borderColor: p.color,
                           backgroundColor: `${p.color}18`
@@ -212,22 +222,21 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                         <div className="flex items-center gap-1 font-bubbly font-bold text-xs text-[#3D352E] truncate">
                           <span className="truncate">{p.name}</span>
                           {p.isHost && (
-                            <Crown className="w-3.5 h-3.5 text-[#F5B83D] shrink-0" />
+                            <Crown className="w-3 h-3 text-[#F5B83D] shrink-0" />
                           )}
                           {p.isBot && (
-                            <span className="text-[9px] bg-[#EFEAE1] text-[#7A7067] font-bubbly px-1.5 py-0.2 rounded-md shrink-0">
+                            <span className="text-[8px] bg-[#EFEAE1] text-[#7A7067] font-bubbly px-1 rounded-sm shrink-0">
                               BOT
                             </span>
                           )}
                         </div>
 
-                        {/* Player Line Color Preview */}
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <div
-                            className="w-5 h-2 rounded-full shadow-xs"
+                            className="w-4 h-1.5 rounded-full shadow-xs"
                             style={{ backgroundColor: p.color }}
                           />
-                          <span className="text-[10px] text-[#8C8074] font-medium">
+                          <span className="text-[10px] text-[#8C8074]">
                             {isMe ? 'You' : p.isReady ? 'Ready' : 'In Lobby'}
                           </span>
                         </div>
@@ -236,7 +245,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
 
                     <div className="flex items-center gap-1.5 shrink-0">
                       {p.isReady ? (
-                        <span className="text-[11px] text-[#58C99E] font-bubbly font-bold flex items-center gap-1 bg-[#EAFBF3] px-2 py-0.5 rounded-lg border border-[#BCEEDA]">
+                        <span className="text-[10px] text-[#58C99E] font-bubbly font-bold flex items-center gap-0.5 bg-[#EAFBF3] px-2 py-0.5 rounded-lg border border-[#BCEEDA]">
                           <Check className="w-3 h-3" /> Ready
                         </span>
                       ) : (
@@ -274,12 +283,12 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 </h4>
               </div>
               <span className="text-[10px] text-[#8C8074] font-bubbly">
-                Unique · No two players can share a colour
+                Unique · No two players share a colour
               </span>
             </div>
 
-            {/* Colour Swatches Grid */}
-            <div className="grid grid-cols-5 gap-2">
+            {/* 16 Colour Swatches Grid */}
+            <div className="grid grid-cols-8 gap-1.5">
               {PASTEL_COLOR_CHOICES.map((preset) => {
                 const claimant = room.players.find(
                   p => p.color.toLowerCase() === preset.hex.toLowerCase()
@@ -293,7 +302,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     type="button"
                     disabled={Boolean(isTakenByOther)}
                     onClick={() => handleColorClick(preset.hex)}
-                    className={`relative h-10 rounded-2xl flex items-center justify-center transition-all ${
+                    className={`relative h-8 rounded-xl flex items-center justify-center transition-all ${
                       isSelectedByMe
                         ? 'ring-2 ring-[#3D352E] shadow-sm scale-105 z-10'
                         : isTakenByOther
@@ -310,14 +319,14 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     }
                   >
                     {isSelectedByMe && (
-                      <div className="w-5 h-5 rounded-full bg-white/90 flex items-center justify-center shadow-xs">
-                        <Check className="w-3.5 h-3.5 text-[#3D352E] font-black" />
+                      <div className="w-4 h-4 rounded-full bg-white/90 flex items-center justify-center shadow-xs">
+                        <Check className="w-3 h-3 text-[#3D352E] font-black" />
                       </div>
                     )}
 
                     {isTakenByOther && (
-                      <div className="w-5 h-5 rounded-full bg-white/80 flex items-center justify-center text-[10px] shadow-xs">
-                        {claimant?.avatar || <Lock className="w-3 h-3 text-[#5C5248]" />}
+                      <div className="w-4 h-4 rounded-full bg-white/80 flex items-center justify-center text-[8px] shadow-xs">
+                        {claimant?.avatar || <Lock className="w-2.5 h-2.5 text-[#5C5248]" />}
                       </div>
                     )}
                   </button>
@@ -326,13 +335,13 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             </div>
 
             {/* Current Chosen Line Display */}
-            <div className="mt-2.5 p-2.5 bg-[#FAF7F2] border border-[#EFEAE1] rounded-2xl flex items-center justify-between">
+            <div className="mt-2 p-2 bg-[#FAF7F2] border border-[#EFEAE1] rounded-2xl flex items-center justify-between">
               <span className="text-[11px] text-[#7A7067] font-bubbly">
                 Your Line Appearance:
               </span>
               <div className="flex items-center gap-2">
                 <div
-                  className="w-20 h-2.5 rounded-full shadow-xs transition-colors"
+                  className="w-16 h-2 rounded-full shadow-xs transition-colors"
                   style={{ backgroundColor: myPlayer?.color || '#5BBFEA' }}
                 />
                 <span className="text-sm">{myPlayer?.avatar || '🦊'}</span>
@@ -344,7 +353,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
         {/* Right Column: Grid Sizes & Timer */}
         <div className="bg-white border-2 border-[#EFEAE1] rounded-3xl p-5 shadow-[0_4px_16px_rgba(180,160,140,0.06)] flex flex-col justify-between h-full space-y-4">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <Grid className="w-4 h-4 text-[#5BBFEA]" />
                 <h3 className="font-bubbly font-bold text-sm text-[#3D352E]">
@@ -356,66 +365,129 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               </span>
             </div>
 
+            {/* Warning when more than 4 players: ONLY 7x7 or 8x8 permitted */}
+            {isLargeParty && (
+              <div className="mb-2.5 p-2 bg-[#FFF8EB] border border-[#FDE7B3] rounded-2xl text-[11px] font-bubbly text-[#B87A0B] flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>5+ players active: 7×7 or 8×8 grid required!</span>
+              </div>
+            )}
+
             <div className="grid grid-cols-3 gap-2">
               {GRID_PRESETS.map((preset) => {
                 const isSelected =
                   room.gridRows === preset.rows && room.gridCols === preset.cols;
+                const isLockedForLargeParty = isLargeParty && preset.rows < 7;
+
                 return (
                   <button
                     key={preset.name}
-                    disabled={!isHost}
+                    disabled={!isHost || isLockedForLargeParty}
                     onClick={() => {
                       sound.playClick();
-                      onUpdateSettings(preset.rows, preset.cols, room.turnTimeLimit);
+                      onUpdateSettings(preset.rows, preset.cols, room.turnTimeLimit, room.maxPlayers);
                     }}
-                    className={`flex flex-col items-center justify-center py-3.5 px-2 rounded-2xl border-2 text-center transition-all ${
+                    className={`relative flex flex-col items-center justify-center py-3 px-2 rounded-2xl border-2 text-center transition-all ${
                       isSelected
                         ? 'bg-[#EAF6FD] border-[#5BBFEA] text-[#24485D] shadow-xs'
+                        : isLockedForLargeParty
+                        ? 'bg-[#F5F2EB] border-[#E8DFC8] text-[#A69B8F] cursor-not-allowed opacity-50'
                         : 'bg-[#FAF7F2] border-[#EFEAE1] text-[#5C5248] hover:border-[#DFD7CB]'
-                    } ${!isHost ? 'cursor-default opacity-85' : 'active:scale-95'}`}
+                    } ${!isHost || isLockedForLargeParty ? 'cursor-default' : 'active:scale-95'}`}
                   >
                     <span className="font-bubbly font-bold text-sm">{preset.rows}×{preset.cols}</span>
-                    <span className="text-[10px] text-[#8C8074] font-medium mt-0.5">{preset.boxes} boxes</span>
+                    <span className="text-[10px] text-[#8C8074] font-medium mt-0.5">
+                      {isLockedForLargeParty ? '7×7+ req' : `${preset.boxes} boxes`}
+                    </span>
+                    {isLockedForLargeParty && (
+                      <Lock className="w-3 h-3 text-[#A69B8F] absolute top-2 right-2" />
+                    )}
                   </button>
                 );
               })}
             </div>
 
-            {/* Turn Timer */}
-            <div className="mt-5 pt-4 border-t border-[#F0EAE1]">
-              <div className="flex items-center justify-between mb-2.5">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-[#5BBFEA]" />
-                  <h3 className="font-bubbly font-bold text-xs text-[#3D352E]">
-                    Turn Timer
-                  </h3>
+            {/* Room Max Players & Turn Timer Settings */}
+            <div className="mt-4 pt-3 border-t border-[#F0EAE1] space-y-3">
+              {/* Max Players Selector (2 to 8) */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-[#5BBFEA]" />
+                    <span className="font-bubbly font-bold text-xs text-[#3D352E]">
+                      Max Player Capacity (2–8)
+                    </span>
+                  </div>
+                  <span className="text-xs font-bubbly font-bold text-[#5BBFEA]">
+                    {room.maxPlayers} Max
+                  </span>
                 </div>
-                <span className="text-[11px] font-bubbly text-[#8C8074]">
-                  {room.turnTimeLimit > 0 ? `${room.turnTimeLimit}s per turn` : 'Unlimited'}
-                </span>
+
+                <div className="grid grid-cols-7 gap-1">
+                  {[2, 3, 4, 5, 6, 7, 8].map((num) => {
+                    const isSelected = room.maxPlayers === num;
+                    return (
+                      <button
+                        key={num}
+                        type="button"
+                        disabled={!isHost || room.players.length > num}
+                        onClick={() => {
+                          sound.playClick();
+                          const nextRows = num > 4 && room.gridRows < 7 ? 7 : room.gridRows;
+                          const nextCols = num > 4 && room.gridCols < 7 ? 7 : room.gridCols;
+                          onUpdateSettings(nextRows, nextCols, room.turnTimeLimit, num);
+                        }}
+                        className={`py-1.5 rounded-xl border text-center text-xs font-bubbly font-bold transition-all ${
+                          isSelected
+                            ? 'bg-[#EAF6FD] border-[#5BBFEA] text-[#24485D] shadow-xs'
+                            : room.players.length > num
+                            ? 'opacity-30 cursor-not-allowed bg-[#FAF7F2] border-[#EFEAE1]'
+                            : 'bg-[#FAF7F2] border-[#EFEAE1] text-[#7A7067] hover:text-[#3D352E]'
+                        }`}
+                      >
+                        {num}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-1.5">
-                {TURN_TIMES.map((tt) => {
-                  const isSelected = room.turnTimeLimit === tt.val;
-                  return (
-                    <button
-                      key={tt.label}
-                      disabled={!isHost}
-                      onClick={() => {
-                        sound.playClick();
-                        onUpdateSettings(room.gridRows, room.gridCols, tt.val);
-                      }}
-                      className={`py-2 px-1 rounded-xl border-2 text-center text-xs font-bubbly font-bold transition-all ${
-                        isSelected
-                          ? 'bg-[#EAF6FD] border-[#5BBFEA] text-[#24485D]'
-                          : 'bg-[#FAF7F2] border-[#EFEAE1] text-[#7A7067] hover:text-[#3D352E]'
-                      } ${!isHost ? 'cursor-default' : 'active:scale-95'}`}
-                    >
-                      {tt.label}
-                    </button>
-                  );
-                })}
+              {/* Turn Timer */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[#5BBFEA]" />
+                    <span className="font-bubbly font-bold text-xs text-[#3D352E]">
+                      Turn Timer
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-bubbly text-[#8C8074]">
+                    {room.turnTimeLimit > 0 ? `${room.turnTimeLimit}s per turn` : 'Unlimited'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-5 gap-1">
+                  {TURN_TIMES.map((tt) => {
+                    const isSelected = room.turnTimeLimit === tt.val;
+                    return (
+                      <button
+                        key={tt.label}
+                        disabled={!isHost}
+                        onClick={() => {
+                          sound.playClick();
+                          onUpdateSettings(room.gridRows, room.gridCols, tt.val, room.maxPlayers);
+                        }}
+                        className={`py-1.5 px-1 rounded-xl border text-center text-[11px] font-bubbly font-bold transition-all ${
+                          isSelected
+                            ? 'bg-[#EAF6FD] border-[#5BBFEA] text-[#24485D]'
+                            : 'bg-[#FAF7F2] border-[#EFEAE1] text-[#7A7067] hover:text-[#3D352E]'
+                        } ${!isHost ? 'cursor-default' : 'active:scale-95'}`}
+                      >
+                        {tt.label.split(' ')[0]}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>

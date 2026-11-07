@@ -64,12 +64,14 @@ export const Board: React.FC<BoardProps> = ({
     const updateSize = () => {
       if (!containerRef.current) return;
       const { clientWidth, clientHeight } = containerRef.current;
+      const isMobile = clientWidth < 640;
       // Scales dynamically when one or both sidebars (participants, chat) are minimized!
       const maxCap = expansionLevel === 2 ? 940 : expansionLevel === 1 || isExpanded ? 820 : 660;
-      const maxAvailable = Math.min(clientWidth - 28, clientHeight - 28, maxCap);
-      const safeSize = Math.max(maxAvailable, 300);
+      const margin = isMobile ? 12 : 28;
+      const maxAvailable = Math.min(clientWidth - margin, clientHeight - margin, maxCap);
+      const safeSize = Math.max(maxAvailable, isMobile ? 240 : 300);
 
-      const padding = Math.max(36, safeSize * 0.075);
+      const padding = Math.max(isMobile ? 22 : 36, safeSize * 0.075);
       const usable = safeSize - padding * 2;
       const cells = Math.max(rows, cols);
       const cellSize = usable / cells;
@@ -381,9 +383,10 @@ export const Board: React.FC<BoardProps> = ({
                       x2={p2.x}
                       y2={p2.y}
                       stroke="transparent"
-                      strokeWidth="32"
+                      strokeWidth="40"
                       strokeLinecap="round"
-                      className="cursor-pointer"
+                      className="cursor-pointer touch-manipulation"
+                      style={{ touchAction: 'manipulation' }}
                       onClick={() => handleLineClick('h', r, c)}
                     />
                   )}
@@ -438,9 +441,10 @@ export const Board: React.FC<BoardProps> = ({
                       x2={p2.x}
                       y2={p2.y}
                       stroke="transparent"
-                      strokeWidth="32"
+                      strokeWidth="40"
                       strokeLinecap="round"
-                      className="cursor-pointer"
+                      className="cursor-pointer touch-manipulation"
+                      style={{ touchAction: 'manipulation' }}
                       onClick={() => handleLineClick('v', r, c)}
                     />
                   )}

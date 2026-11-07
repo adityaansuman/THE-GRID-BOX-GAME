@@ -14,6 +14,7 @@ import {
   HelpCircle,
   Sparkles
 } from 'lucide-react';
+import { AvatarPickerModal } from './AvatarPickerModal';
 
 interface TitleScreenProps {
   user: UserProfile | null;
@@ -52,6 +53,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 }) => {
   const [joinCode, setJoinCode] = useState('');
   const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
 
   const handleJoinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -179,15 +181,24 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         {!user && (
           <div className="w-full bg-white border-2 border-[#EFEAE1] rounded-3xl p-4 mb-4 shadow-[0_4px_16px_rgba(180,160,140,0.06)] flex items-center justify-between gap-3 text-left">
             <div className="flex items-center gap-3">
-              <div
-                className="w-11 h-11 rounded-2xl flex items-center justify-center text-xl border shadow-xs"
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playClick();
+                  setShowAvatarPicker(true);
+                }}
+                className="w-11 h-11 rounded-2xl flex items-center justify-center text-xl border shadow-xs hover:scale-105 active:scale-95 transition-all group relative cursor-pointer"
                 style={{
                   borderColor: guestColor,
                   backgroundColor: `${guestColor}22`
                 }}
+                title="Change Avatar Icon"
               >
                 {guestAvatar}
-              </div>
+                <span className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 border border-[#EFEAE1] text-[10px]">
+                  ✨
+                </span>
+              </button>
               <div>
                 <label className="text-[10px] text-[#A69B8F] uppercase font-bubbly font-bold block">
                   Your Nickname
@@ -207,11 +218,12 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               type="button"
               onClick={() => {
                 sound.playClick();
-                onOpenAuth();
+                setShowAvatarPicker(true);
               }}
-              className="font-bubbly text-xs font-bold text-[#5BBFEA] hover:text-[#49B5E3] underline"
+              className="font-bubbly text-xs font-bold text-[#5BBFEA] hover:text-[#49B5E3] flex items-center gap-1.5 px-3 py-1.5 bg-[#EAF6FD] hover:bg-[#DDF1FC] rounded-xl border border-[#C5E7FA] transition-all"
             >
-              Save Profile
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Change Avatar</span>
             </button>
           </div>
         )}
@@ -362,6 +374,17 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </div>
         </div>
       )}
+
+      {/* Avatar Picker for Guest Player */}
+      <AvatarPickerModal
+        isOpen={showAvatarPicker}
+        onClose={() => setShowAvatarPicker(false)}
+        selectedAvatar={guestAvatar}
+        onSelectAvatar={(chosen) => {
+          onUpdateGuest(guestName, guestColor, chosen);
+        }}
+        accentColor={guestColor}
+      />
     </div>
   );
 };

@@ -19,11 +19,13 @@ if (!fs.existsSync(DATA_DIR)) {
 
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const LEADERBOARD_FILE = path.join(DATA_DIR, 'leaderboard.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
 // Types
 export interface UserAccount {
   id: string;
   username: string;
+  email?: string;
   passwordHash: string;
   displayName: string;
   color: string;
@@ -79,80 +81,29 @@ function saveUsers(users: Record<string, UserAccount>) {
   }
 }
 
-// Seed initial leaderboard if empty to give high-score goals to new players
-function getInitialLeaderboard(): LeaderboardEntry[] {
-  return [
-    {
-      userId: 'bot_master',
-      username: 'grandmaster_kai',
-      displayName: 'Kai the DotWeaver',
-      avatar: '🦊',
-      color: '#5BBFEA',
-      wins: 84,
-      boxesClaimed: 1120,
-      totalScore: 3340,
-      highestCombo: 11,
-      winStreak: 9,
-      gamesPlayed: 102,
-      winRate: 82
-    },
-    {
-      userId: 'bot_queen',
-      username: 'aurora_grid',
-      displayName: 'Aurora Squares',
-      avatar: '⚡',
-      color: '#FF8DA1',
-      wins: 71,
-      boxesClaimed: 940,
-      totalScore: 2850,
-      highestCombo: 9,
-      winStreak: 6,
-      gamesPlayed: 90,
-      winRate: 78
-    },
-    {
-      userId: 'bot_tactician',
-      username: 'pixel_monk',
-      displayName: 'Pixel Monk',
-      avatar: '🧘‍♂️',
-      color: '#58C99E',
-      wins: 58,
-      boxesClaimed: 760,
-      totalScore: 2190,
-      highestCombo: 7,
-      winStreak: 5,
-      gamesPlayed: 79,
-      winRate: 73
-    },
-    {
-      userId: 'bot_blitz',
-      username: 'chain_reaction',
-      displayName: 'ChainReaction',
-      avatar: '🔥',
-      color: '#FF9F68',
-      wins: 49,
-      boxesClaimed: 620,
-      totalScore: 1840,
-      highestCombo: 8,
-      winStreak: 4,
-      gamesPlayed: 68,
-      winRate: 72
-    },
-    {
-      userId: 'bot_luna',
-      username: 'luna_nebula',
-      displayName: 'Luna Nova',
-      avatar: '🌸',
-      color: '#A389D4',
-      wins: 38,
-      boxesClaimed: 490,
-      totalScore: 1470,
-      highestCombo: 6,
-      winStreak: 3,
-      gamesPlayed: 54,
-      winRate: 70
+function loadSessions(): Record<string, string> {
+  try {
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const content = fs.readFileSync(SESSIONS_FILE, 'utf-8');
+      return JSON.parse(content);
     }
-  ];
+  } catch (err) {
+    console.error('Error loading sessions:', err);
+  }
+  return {};
+}
+
+function saveSessions(sess: Record<string, string>) {
+  try {
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sess, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving sessions:', err);
+  }
+}
+
+// Genuine leaderboard only - start empty without fake bots
+function getInitialLeaderboard(): LeaderboardEntry[] {
+  return [];
 }
 
 function loadLeaderboard(): LeaderboardEntry[] {
@@ -178,9 +129,13 @@ function saveLeaderboard(leaderboard: LeaderboardEntry[]) {
 }
 
 let users = loadUsers();
-let leaderboard = loadLeaderboard();
+// Strictly genuine logged-in accounts only: purge any bots or invalid entries
+let leaderboard = loadLeaderboard().filter(e => e.userId && !e.userId.startsWith('bot_') && users[e.userId]);
+saveLeaderboard(leaderboard);
 
 function updateLeaderboardForUser(user: UserAccount) {
+  if (!user || !user.id || !users[user.id] || user.id.startsWith('bot_')) return;
+
   const existingIndex = leaderboard.findIndex(entry => entry.userId === user.id);
   const winRate = user.stats.gamesPlayed > 0 
     ? Math.round((user.stats.wins / user.stats.gamesPlayed) * 100) 
@@ -212,14 +167,63 @@ function updateLeaderboardForUser(user: UserAccount) {
   saveLeaderboard(leaderboard);
 }
 
-// In-Memory Simple Session token lookup
-const sessions: Record<string, string> = {}; // token -> userId
+// Session token lookup with persistence
+const sessions: Record<string, string> = loadSessions();
 
 function generateToken(): string {
   return 'tok_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
 // REST Endpoints
+app.post('/api/auth/google', (req, res) => {
+  const { email, name, avatar } = req.body;
+  const googleEmail = (email || `player_${Date.now()}@gmail.com`).toLowerCase().trim();
+  const rawUsername = googleEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15) || 'player';
+
+  // Find existing user by email or username
+  let user = Object.values(users).find(u => (u.email && u.email.toLowerCase() === googleEmail) || u.username.toLowerCase() === rawUsername);
+
+  if (!user) {
+    const id = 'usr_g_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    user = {
+      id,
+      username: rawUsername,
+      email: googleEmail,
+      passwordHash: 'google_oauth_authenticated',
+      displayName: (name || rawUsername).trim().substring(0, 20),
+      color: '#5BBFEA',
+      avatar: avatar || '⚡',
+      createdAt: Date.now(),
+      lastLoginAt: Date.now(),
+      stats: {
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        gamesPlayed: 0,
+        boxesClaimed: 0,
+        highestCombo: 0,
+        totalScore: 0,
+        winStreak: 0,
+        bestWinStreak: 0,
+      }
+    };
+    users[id] = user;
+    saveUsers(users);
+    updateLeaderboardForUser(user);
+  } else {
+    user.lastLoginAt = Date.now();
+    if (name && !user.displayName) user.displayName = name.trim().substring(0, 20);
+    saveUsers(users);
+  }
+
+  const token = generateToken();
+  sessions[token] = user.id;
+  saveSessions(sessions);
+
+  const { passwordHash: _, ...safeUser } = user;
+  res.json({ token, user: safeUser });
+});
+
 app.post('/api/auth/register', (req, res) => {
   const { username, password, displayName, color, avatar } = req.body;
   if (!username || !password) {
@@ -269,6 +273,7 @@ app.post('/api/auth/register', (req, res) => {
 
   const token = generateToken();
   sessions[token] = id;
+  saveSessions(sessions);
 
   const { passwordHash: _, ...safeUser } = newUser;
   res.json({ token, user: safeUser });
@@ -293,6 +298,7 @@ app.post('/api/auth/login', (req, res) => {
 
   const token = generateToken();
   sessions[token] = user.id;
+  saveSessions(sessions);
 
   const { passwordHash: _, ...safeUser } = user;
   res.json({ token, user: safeUser });
@@ -356,6 +362,7 @@ export interface Player {
   isReady: boolean;
   isBot?: boolean;
   botLevel?: 'easy' | 'medium' | 'hard';
+  isDisconnected?: boolean;
 }
 
 export interface Box {
@@ -664,10 +671,10 @@ function endGame(room: GameRoom) {
   }
   room.winners = winners;
 
-  // Record stats for persistent users
+  // Record stats only for genuine logged-in accounts (never bots, never guests)
   const isTie = winners.length > 1;
   for (const p of room.players) {
-    if (p.userId && users[p.userId]) {
+    if (p.userId && users[p.userId] && !p.isBot && !p.id.startsWith('bot_')) {
       const u = users[p.userId];
       u.stats.gamesPlayed += 1;
       u.stats.boxesClaimed += p.score;
@@ -844,7 +851,13 @@ const PASTEL_PALETTE = [
   '#E679B5', // Pastel Bubblegum
   '#82C29B', // Pastel Sage
   '#4DB6AC', // Pastel Teal
-  '#7E97E8'  // Pastel Periwinkle
+  '#7E97E8', // Pastel Periwinkle
+  '#F78DA7', // Pastel Rose
+  '#A0D468', // Pastel Lime
+  '#FFB85C', // Pastel Apricot
+  '#6AC4F8', // Pastel Cyan
+  '#C084FC', // Pastel Violet
+  '#FBBF24'  // Pastel Amber
 ];
 
 function getUniqueColorForPlayer(existingPlayers: Player[], preferredColor?: string): string {
@@ -860,8 +873,91 @@ function getUniqueColorForPlayer(existingPlayers: Player[], preferredColor?: str
   return preferredColor || '#5BBFEA';
 }
 
+function handleClientDisconnect(ws: WebSocket) {
+  const info = clientRooms.get(ws);
+  if (!info) return;
+  clientRooms.delete(ws);
+
+  const room = rooms.get(info.roomCode);
+  if (!room) return;
+
+  const playerIdx = room.players.findIndex(p => p.id === info.playerId);
+  if (playerIdx < 0) return;
+
+  const wasCurrentTurn = room.currentTurnIndex === playerIdx;
+  room.players.splice(playerIdx, 1);
+
+  if (room.players.length === 0) {
+    if (room.turnInterval) {
+      clearInterval(room.turnInterval);
+      room.turnInterval = null;
+    }
+    rooms.delete(room.code);
+  } else {
+    // If host left, elect new host
+    if (room.hostId === info.playerId) {
+      room.hostId = room.players[0].id;
+      room.players[0].isHost = true;
+    }
+
+    if (room.state === 'playing') {
+      const activeHumans = room.players.filter(p => !p.isBot);
+      if (room.players.length === 1 && activeHumans.length === 1) {
+        room.state = 'game_over';
+        if (room.turnInterval) {
+          clearInterval(room.turnInterval);
+          room.turnInterval = null;
+        }
+        room.winners = [room.players[0]];
+        const winner = room.players[0];
+        if (winner.userId && users[winner.userId] && !winner.isBot) {
+          const u = users[winner.userId];
+          u.stats.wins++;
+          u.stats.gamesPlayed++;
+          u.stats.totalScore += 50;
+          saveUsers(users);
+          updateLeaderboardForUser(u);
+        }
+        broadcastToRoom(room, 'game:over', {
+          winners: room.winners,
+          room: sanitizeRoom(room),
+          leaderboard
+        });
+      } else {
+        // 2 or more players remain: the game CONTINUES without the disconnected player!
+        if (wasCurrentTurn) {
+          room.currentTurnIndex = room.currentTurnIndex % room.players.length;
+          resetTurnTimer(room);
+          checkAndTriggerBotMove(room);
+        } else if (playerIdx < room.currentTurnIndex) {
+          room.currentTurnIndex = (room.currentTurnIndex - 1 + room.players.length) % room.players.length;
+        }
+      }
+    }
+    broadcastToRoom(room, 'room:sync', { room: sanitizeRoom(room) });
+  }
+  broadcastLobbies();
+}
+
 // WebSocket Connection Management
+// Heartbeat to detect network drops promptly
+const heartbeatInterval = setInterval(() => {
+  for (const client of wss.clients) {
+    if ((client as any).isAlive === false) {
+      handleClientDisconnect(client);
+      client.terminate();
+      continue;
+    }
+    (client as any).isAlive = false;
+    client.ping();
+  }
+}, 3000);
 wss.on('connection', (ws) => {
+  (ws as any).isAlive = true;
+  ws.on('pong', () => {
+    (ws as any).isAlive = true;
+  });
+
   let boundRoomCode: string | null = null;
   let boundPlayerId: string | null = null;
 
@@ -877,14 +973,28 @@ wss.on('connection', (ws) => {
 
   ws.on('message', (data) => {
     try {
-      const msg = JSON.parse(data.toString());
+      (ws as any).isAlive = true;
+      const rawStr = data.toString();
+      if (rawStr === 'ping') {
+        ws.send('pong');
+        return;
+      }
+
+      const msg = JSON.parse(rawStr);
       const { event, payload } = msg;
 
       if (event === 'room:create') {
         const { name, isPublic, rows, cols, turnTime, maxPlayers, player } = payload;
         const code = Math.random().toString(36).substring(2, 7).toUpperCase();
-        const gridRows = Math.min(Math.max(rows || 4, 3), 8);
-        const gridCols = Math.min(Math.max(cols || 4, 3), 8);
+        const targetMaxPlayers = Math.min(Math.max(maxPlayers || 4, 2), 8);
+        let gridRows = Math.min(Math.max(rows || 4, 3), 8);
+        let gridCols = Math.min(Math.max(cols || 4, 3), 8);
+
+        // When room max players > 4, enforce 7x7 or 8x8
+        if (targetMaxPlayers > 4) {
+          gridRows = gridRows >= 8 ? 8 : 7;
+          gridCols = gridCols >= 8 ? 8 : 7;
+        }
 
         const hostColor = getUniqueColorForPlayer([], player.color);
         const hostPlayer: Player = {
@@ -895,7 +1005,8 @@ wss.on('connection', (ws) => {
           avatar: player.avatar || '👑',
           score: 0,
           isHost: true,
-          isReady: true
+          isReady: true,
+          isDisconnected: false
         };
 
         const boardData = createBoardData(gridRows, gridCols);
@@ -904,7 +1015,7 @@ wss.on('connection', (ws) => {
           name: (name || `${hostPlayer.name}'s Grid`).trim().substring(0, 24),
           isPublic: isPublic !== false,
           hostId: hostPlayer.id,
-          maxPlayers: Math.min(Math.max(maxPlayers || 4, 2), 6),
+          maxPlayers: targetMaxPlayers,
           gridRows,
           gridCols,
           turnTimeLimit: turnTime !== undefined ? turnTime : 30,
@@ -916,7 +1027,7 @@ wss.on('connection', (ws) => {
           ...boardData,
           totalBoxes: gridRows * gridCols,
           claimedBoxesCount: 0,
-          chatMessages: [], // Keep chat exclusively for player messages
+          chatMessages: [],
           winners: null,
           turnInterval: null
         };
@@ -941,16 +1052,7 @@ wss.on('connection', (ws) => {
         }
 
         if (room.state === 'playing') {
-          // If existing player reconnecting
-          const existing = room.players.find(p => p.id === player.id || (p.userId && p.userId === player.userId));
-          if (existing) {
-            boundRoomCode = cleanCode;
-            boundPlayerId = existing.id;
-            clientRooms.set(ws, { roomCode: cleanCode, playerId: existing.id });
-            sendToClient(ws, 'room:joined', { room: sanitizeRoom(room), yourPlayerId: existing.id });
-            return;
-          }
-          sendToClient(ws, 'error', { message: 'Game in progress. Spectating or wait for next round.' });
+          sendToClient(ws, 'error', { message: 'Game in progress. Please join or create another room!' });
           return;
         }
 
@@ -970,10 +1072,27 @@ wss.on('connection', (ws) => {
           avatar: player.avatar || '🎮',
           score: 0,
           isHost: false,
-          isReady: false
+          isReady: false,
+          isDisconnected: false
         };
 
         room.players.push(newPlayer);
+
+        // If player count exceeds 4, enforce 7x7 or 8x8 grid
+        if (room.players.length > 4 && (room.gridRows < 7 || room.gridCols < 7)) {
+          room.gridRows = 7;
+          room.gridCols = 7;
+          room.totalBoxes = 49;
+          const boardData = createBoardData(7, 7);
+          room.hLines = boardData.hLines;
+          room.hLineOwners = boardData.hLineOwners;
+          room.hLineColors = boardData.hLineColors;
+          room.vLines = boardData.vLines;
+          room.vLineOwners = boardData.vLineOwners;
+          room.vLineColors = boardData.vLineColors;
+          room.boxes = boardData.boxes;
+        }
+
         boundRoomCode = cleanCode;
         boundPlayerId = newPlayer.id;
         clientRooms.set(ws, { roomCode: cleanCode, playerId: newPlayer.id });
@@ -1042,8 +1161,8 @@ wss.on('connection', (ws) => {
         if (!room || room.hostId !== boundPlayerId || room.state !== 'lobby') return;
         if (room.players.length >= room.maxPlayers) return;
 
-        const botNames = ['ByteBot 🤖', 'NeonCyborg 👾', 'DotMatrix ⚡', 'ApexGrid 🧠'];
-        const botAvatars = ['🤖', '👾', '⚡', '🧠'];
+        const botNames = ['ByteBot 🤖', 'NeonCyborg 👾', 'DotMatrix ⚡', 'ApexGrid 🧠', 'PixelWhiz 🎯', 'GridNinja 🥷', 'QuantumBot 🌌', 'CyberPanda 🐼'];
+        const botAvatars = ['🤖', '👾', '⚡', '🧠', '🎯', '🥷', '🌌', '🐼'];
         const idx = room.players.length;
         const botColor = getUniqueColorForPlayer(room.players);
 
@@ -1056,10 +1175,27 @@ wss.on('connection', (ws) => {
           isHost: false,
           isReady: true,
           isBot: true,
-          botLevel: payload.level || 'medium'
+          botLevel: payload.level || 'medium',
+          isDisconnected: false
         };
 
         room.players.push(botPlayer);
+
+        // If player count exceeds 4, enforce 7x7 or 8x8 grid
+        if (room.players.length > 4 && (room.gridRows < 7 || room.gridCols < 7)) {
+          room.gridRows = 7;
+          room.gridCols = 7;
+          room.totalBoxes = 49;
+          const boardData = createBoardData(7, 7);
+          room.hLines = boardData.hLines;
+          room.hLineOwners = boardData.hLineOwners;
+          room.hLineColors = boardData.hLineColors;
+          room.vLines = boardData.vLines;
+          room.vLineOwners = boardData.vLineOwners;
+          room.vLineColors = boardData.vLineColors;
+          room.boxes = boardData.boxes;
+        }
+
         broadcastToRoom(room, 'room:update_players', { players: room.players });
         broadcastLobbies();
       }
@@ -1082,8 +1218,20 @@ wss.on('connection', (ws) => {
         const room = rooms.get(boundRoomCode);
         if (!room || room.hostId !== boundPlayerId || room.state !== 'lobby') return;
 
-        if (payload.rows) room.gridRows = Math.min(Math.max(payload.rows, 3), 8);
-        if (payload.cols) room.gridCols = Math.min(Math.max(payload.cols, 3), 8);
+        if (payload.maxPlayers) {
+          room.maxPlayers = Math.min(Math.max(payload.maxPlayers, 2), 8);
+        }
+
+        // Enforce 7x7 or 8x8 if > 4 players or maxPlayers > 4
+        if (room.players.length > 4 || room.maxPlayers > 4) {
+          const target = payload.rows === 8 || payload.cols === 8 ? 8 : 7;
+          room.gridRows = target;
+          room.gridCols = target;
+        } else {
+          if (payload.rows) room.gridRows = Math.min(Math.max(payload.rows, 3), 8);
+          if (payload.cols) room.gridCols = Math.min(Math.max(payload.cols, 3), 8);
+        }
+
         if (payload.turnTime !== undefined) room.turnTimeLimit = payload.turnTime;
         room.totalBoxes = room.gridRows * room.gridCols;
 
@@ -1118,6 +1266,7 @@ wss.on('connection', (ws) => {
 
         for (const p of room.players) {
           p.score = 0;
+          p.isDisconnected = false;
         }
 
         const boardData = createBoardData(room.gridRows, room.gridCols);
@@ -1198,58 +1347,6 @@ wss.on('connection', (ws) => {
     handleClientDisconnect(ws);
   });
 });
-
-function handleClientDisconnect(ws: WebSocket) {
-  const info = clientRooms.get(ws);
-  if (!info) return;
-  clientRooms.delete(ws);
-
-  const room = rooms.get(info.roomCode);
-  if (!room) return;
-
-  const playerIdx = room.players.findIndex(p => p.id === info.playerId);
-  if (playerIdx >= 0) {
-    const leftPlayer = room.players[playerIdx];
-    room.players.splice(playerIdx, 1);
-
-    // Player left - room state syncs without chat clutter
-
-    if (room.players.length === 0) {
-      if (room.turnInterval) clearInterval(room.turnInterval);
-      rooms.delete(room.code);
-    } else {
-      // If host left, elect new host
-      if (room.hostId === info.playerId) {
-        room.hostId = room.players[0].id;
-        room.players[0].isHost = true;
-      }
-      if (room.state === 'playing') {
-        if (room.players.length === 1 && !room.players[0].isBot) {
-          room.state = 'game_over';
-          if (room.turnInterval) clearInterval(room.turnInterval);
-          room.winners = [room.players[0]];
-          const winner = room.players[0];
-          if (winner.userId && users[winner.userId]) {
-            const u = users[winner.userId];
-            u.stats.wins++;
-            u.stats.gamesPlayed++;
-            u.stats.totalScore += 50;
-            saveUsers(users);
-            updateLeaderboardForUser(u);
-          }
-        } else {
-          if (room.currentTurnIndex >= room.players.length) {
-            room.currentTurnIndex = 0;
-          }
-          resetTurnTimer(room);
-          checkAndTriggerBotMove(room);
-        }
-      }
-      broadcastToRoom(room, 'room:sync', { room: sanitizeRoom(room) });
-    }
-    broadcastLobbies();
-  }
-}
 
 // Development vs Production serving
 async function startServer() {

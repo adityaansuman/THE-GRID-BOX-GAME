@@ -11,6 +11,7 @@ import { GameOverModal } from './components/GameOverModal';
 import { AuthModal } from './components/AuthModal';
 import { ProfileModal } from './components/ProfileModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
+import { DisconnectedModal } from './components/DisconnectedModal';
 import { Volume2, VolumeX, LogOut, Clock, MessageSquare, Users, Grid, ArrowLeft } from 'lucide-react';
 
 export default function App() {
@@ -38,6 +39,7 @@ export default function App() {
   const [lobbies, setLobbies] = useState<PublicLobbyInfo[]>([]);
   const [screenShake, setScreenShake] = useState(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isWsDisconnected, setIsWsDisconnected] = useState(false);
 
   // Mobile layout tab switcher (for narrow screens)
   const [mobileTab, setMobileTab] = useState<'board' | 'players' | 'chat'>('board');
@@ -46,14 +48,24 @@ export default function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const roomRef = useRef<GameRoom | null>(null);
+  roomRef.current = room;
+  const myPlayerIdRef = useRef<string>('');
+  myPlayerIdRef.current = myPlayerId;
+  const userRef = useRef<UserProfile | null>(null);
+  userRef.current = user;
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Persistent login check
+  // Persistent login check - load immediately from cache and sync with server
   useEffect(() => {
+    const cachedUser = api.getUser();
+    if (cachedUser) {
+      setUser(cachedUser);
+    }
     api.getMe().then((loggedInUser) => {
       if (loggedInUser) {
         setUser(loggedInUser);
@@ -81,6 +93,10 @@ export default function App() {
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
+      if (event.data === 'pong') {
+        setIsWsDisconnected(false);
+        return;
+      }
       try {
         const { event: evt, payload } = JSON.parse(event.data);
 
@@ -171,10 +187,64 @@ export default function App() {
       }
     };
 
-    ws.onclose = () => {
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = setTimeout(connectWebSocket, 2000);
+    ws.onopen = () => {
+      setIsWsDisconnected(false);
     };
+
+    ws.onerror = () => {
+      if (roomRef.current) {
+        setIsWsDisconnected(true);
+      }
+    };
+
+    ws.onclose = () => {
+      if (roomRef.current) {
+        setIsWsDisconnected(true);
+      }
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = setTimeout(connectWebSocket, 1500);
+    };
+  }, []);
+
+  // Instant browser-level network drop detection
+  useEffect(() => {
+    const handleOffline = () => {
+      if (roomRef.current) {
+        setIsWsDisconnected(true);
+      }
+    };
+    const handleOnline = () => {
+      connectWebSocket();
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [connectWebSocket]);
+
+  // Active client heartbeat to detect dropped network within 2s
+  useEffect(() => {
+    const pingInterval = setInterval(() => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        if (roomRef.current) {
+          setIsWsDisconnected(true);
+        }
+        return;
+      }
+      try {
+        wsRef.current.send('ping');
+      } catch {
+        if (roomRef.current) {
+          setIsWsDisconnected(true);
+        }
+      }
+    }, 2000);
+
+    return () => clearInterval(pingInterval);
   }, []);
 
   useEffect(() => {
@@ -268,8 +338,8 @@ export default function App() {
     }
   };
 
-  const handleUpdateSettings = (rows: number, cols: number, turnTime: number) => {
-    sendWs('room:update_settings', { rows, cols, turnTime });
+  const handleUpdateSettings = (rows: number, cols: number, turnTime: number, maxPlayers?: number) => {
+    sendWs('room:update_settings', { rows, cols, turnTime, maxPlayers });
   };
 
   const handleMakeMove = (type: 'h' | 'v', r: number, c: number) => {
@@ -442,39 +512,14 @@ export default function App() {
 
             {/* Right: Sound Toggle & Mobile Tab Selector */}
             <div className="flex items-center gap-2">
-              {/* Mobile View Switcher (visible on smaller screens) */}
-              <div className="flex md:hidden bg-[#FAF7F2] p-1 rounded-2xl border border-[#EFEAE1]">
-                <button
-                  onClick={() => setMobileTab('players')}
-                  className={`p-1.5 rounded-xl ${mobileTab === 'players' ? 'bg-white shadow-xs text-[#5BBFEA]' : 'text-[#8C8074]'}`}
-                  title="Participants"
-                >
-                  <Users className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setMobileTab('board')}
-                  className={`p-1.5 rounded-xl ${mobileTab === 'board' ? 'bg-white shadow-xs text-[#5BBFEA]' : 'text-[#8C8074]'}`}
-                  title="Grid"
-                >
-                  <Grid className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setMobileTab('chat')}
-                  className={`p-1.5 rounded-xl ${mobileTab === 'chat' ? 'bg-white shadow-xs text-[#5BBFEA]' : 'text-[#8C8074]'}`}
-                  title="Chat"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Quick Sidebar Toggles (Participants & Chat) */}
+              {/* Desktop-only Sidebar Toggles */}
               <button
                 type="button"
                 onClick={() => {
                   sound.playClick();
                   setIsParticipantsMinimized(!isParticipantsMinimized);
                 }}
-                className={`p-2 rounded-2xl border-2 transition-all shadow-xs flex items-center gap-1.5 font-bubbly text-xs font-bold ${
+                className={`hidden md:flex p-2 rounded-2xl border-2 transition-all shadow-xs items-center gap-1.5 font-bubbly text-xs font-bold ${
                   isParticipantsMinimized
                     ? 'bg-[#EAF6FD] border-[#5BBFEA] text-[#24485D]'
                     : 'bg-[#FAF7F2] hover:bg-[#F2ECE3] border-[#EFEAE1] text-[#7A7067]'
@@ -493,7 +538,7 @@ export default function App() {
                   sound.playClick();
                   setIsChatMinimized(!isChatMinimized);
                 }}
-                className={`p-2 rounded-2xl border-2 transition-all shadow-xs flex items-center gap-1.5 font-bubbly text-xs font-bold ${
+                className={`hidden md:flex p-2 rounded-2xl border-2 transition-all shadow-xs items-center gap-1.5 font-bubbly text-xs font-bold ${
                   isChatMinimized
                     ? 'bg-[#EAF6FD] border-[#5BBFEA] text-[#24485D]'
                     : 'bg-[#FAF7F2] hover:bg-[#F2ECE3] border-[#EFEAE1] text-[#7A7067]'
@@ -509,6 +554,7 @@ export default function App() {
               <button
                 onClick={handleToggleMute}
                 className="p-2 rounded-2xl bg-[#FAF7F2] hover:bg-[#F2ECE3] border-2 border-[#EFEAE1] text-[#8C8074] hover:text-[#3D352E] transition-colors shadow-xs"
+                title={isMuted ? 'Unmute' : 'Mute'}
               >
                 {isMuted ? <VolumeX className="w-4 h-4 text-[#FF8DA1]" /> : <Volume2 className="w-4 h-4 text-[#5BBFEA]" />}
               </button>
@@ -520,13 +566,26 @@ export default function App() {
               2. Grid (in the centre, dynamically expands)
               3. Chatbox (fixed at the right, collapsible)
           */}
-          <main className="relative flex-1 flex items-center justify-between p-3 sm:p-5 gap-4 overflow-hidden">
+          <main className="relative flex-1 flex items-center justify-between p-2 sm:p-5 gap-3 sm:gap-4 overflow-hidden">
             {/* 1. PARTICIPANT LIST (COLLAPSIBLE / EXPANDABLE) */}
             <div
               className={`h-full transition-all duration-300 ease-out ${
-                mobileTab === 'players' ? 'flex w-full absolute inset-3 z-30' : 'hidden md:flex'
+                mobileTab === 'players' ? 'flex flex-col w-full absolute inset-2 z-30' : 'hidden md:flex'
               }`}
             >
+              {mobileTab === 'players' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playClick();
+                    setMobileTab('board');
+                  }}
+                  className="md:hidden mb-2 py-2.5 px-4 bg-white text-[#5BBFEA] border-2 border-[#C5E7FA] font-bubbly font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-xs active:scale-95"
+                >
+                  <Grid className="w-4 h-4" />
+                  <span>Return to Grid Board</span>
+                </button>
+              )}
               <ParticipantList
                 room={room}
                 myPlayerId={myPlayerId}
@@ -554,9 +613,22 @@ export default function App() {
             {/* 3. CHATBOX AT THE RIGHT (COLLAPSIBLE / EXPANDABLE) */}
             <div
               className={`h-full transition-all duration-300 ease-out ${
-                mobileTab === 'chat' ? 'flex w-full absolute inset-3 z-30' : 'hidden md:flex'
+                mobileTab === 'chat' ? 'flex flex-col w-full absolute inset-2 z-30' : 'hidden md:flex'
               }`}
             >
+              {mobileTab === 'chat' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playClick();
+                    setMobileTab('board');
+                  }}
+                  className="md:hidden mb-2 py-2.5 px-4 bg-white text-[#5BBFEA] border-2 border-[#C5E7FA] font-bubbly font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-xs active:scale-95"
+                >
+                  <Grid className="w-4 h-4" />
+                  <span>Return to Grid Board</span>
+                </button>
+              )}
               <ChatBox
                 messages={room.chatMessages}
                 onSendMessage={handleSendChat}
@@ -568,6 +640,69 @@ export default function App() {
               />
             </div>
           </main>
+
+          {/* Mobile Bottom Navigation Bar (App-Style Tabs) */}
+          <nav className="flex md:hidden items-center justify-around px-3 py-1.5 bg-white/95 backdrop-blur-md border-t-2 border-[#EFEAE1] shadow-[0_-2px_12px_rgba(180,160,140,0.06)] shrink-0 z-40">
+            <button
+              type="button"
+              onClick={() => {
+                sound.playClick();
+                setMobileTab('players');
+              }}
+              className={`flex-1 py-1.5 flex flex-col items-center gap-0.5 rounded-2xl transition-all active:scale-95 ${
+                mobileTab === 'players'
+                  ? 'text-[#5BBFEA] font-bold bg-[#EAF6FD]'
+                  : 'text-[#8C8074] hover:text-[#3D352E]'
+              }`}
+            >
+              <div className="relative">
+                <Users className="w-5 h-5" />
+                <span className="absolute -top-1 -right-2 text-[9px] font-mono bg-[#5BBFEA] text-white px-1 rounded-full font-bold">
+                  {room.players.length}
+                </span>
+              </div>
+              <span className="font-bubbly text-[10px]">Players</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                sound.playClick();
+                setMobileTab('board');
+              }}
+              className={`flex-1 py-1.5 flex flex-col items-center gap-0.5 rounded-2xl transition-all active:scale-95 ${
+                mobileTab === 'board'
+                  ? 'text-[#5BBFEA] font-bold bg-[#EAF6FD]'
+                  : 'text-[#8C8074] hover:text-[#3D352E]'
+              }`}
+            >
+              <Grid className="w-5 h-5" />
+              <span className="font-bubbly text-[10px]">Grid ({room.gridRows}×{room.gridCols})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                sound.playClick();
+                setMobileTab('chat');
+              }}
+              className={`flex-1 py-1.5 flex flex-col items-center gap-0.5 rounded-2xl transition-all active:scale-95 ${
+                mobileTab === 'chat'
+                  ? 'text-[#5BBFEA] font-bold bg-[#EAF6FD]'
+                  : 'text-[#8C8074] hover:text-[#3D352E]'
+              }`}
+            >
+              <div className="relative">
+                <MessageSquare className="w-5 h-5" />
+                {room.chatMessages.filter(m => !m.isSystem).length > 0 && (
+                  <span className="absolute -top-1 -right-2 text-[9px] font-mono bg-[#FF8DA1] text-white px-1 rounded-full font-bold">
+                    {room.chatMessages.filter(m => !m.isSystem).length}
+                  </span>
+                )}
+              </div>
+              <span className="font-bubbly text-[10px]">Chat</span>
+            </button>
+          </nav>
 
           {/* Game Over Modal */}
           <GameOverModal
@@ -602,6 +737,19 @@ export default function App() {
         isOpen={showLeaderboardModal}
         onClose={() => setShowLeaderboardModal(false)}
         currentUserId={user?.id}
+      />
+
+      {/* Network Disconnection Pop-up Screen */}
+      <DisconnectedModal
+        isOpen={isWsDisconnected && !!room}
+        onReconnect={() => {
+          setIsWsDisconnected(false);
+          connectWebSocket();
+        }}
+        onReturnToMenu={() => {
+          setIsWsDisconnected(false);
+          handleLeaveRoom();
+        }}
       />
     </div>
   );

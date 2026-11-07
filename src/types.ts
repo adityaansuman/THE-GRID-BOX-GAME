@@ -1,6 +1,7 @@
 export interface UserProfile {
   id: string;
   username: string;
+  email?: string;
   displayName: string;
   color: string;
   avatar: string;
@@ -29,6 +30,7 @@ export interface Player {
   isReady: boolean;
   isBot?: boolean;
   botLevel?: 'easy' | 'medium' | 'hard';
+  isDisconnected?: boolean;
 }
 
 export interface Box {

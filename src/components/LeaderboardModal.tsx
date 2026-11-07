@@ -132,9 +132,22 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
 
         {/* Rankings Table */}
         <div className="flex-1 overflow-y-auto space-y-2 pr-1 no-scrollbar">
-          {sortedEntries.length === 0 ? (
-            <div className="py-12 text-center text-[#8C8074] text-sm font-bubbly">
-              Loading champions...
+          {loading ? (
+            <div className="py-12 text-center text-[#8C8074] text-xs font-bubbly flex items-center justify-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin text-[#5BBFEA]" />
+              <span>Fetching Hall of Fame...</span>
+            </div>
+          ) : sortedEntries.length === 0 ? (
+            <div className="py-12 px-4 text-center bg-[#FAF7F2] border-2 border-dashed border-[#E8DFC8] rounded-3xl my-2">
+              <div className="w-12 h-12 mx-auto rounded-2xl bg-white border border-[#E8DFC8] flex items-center justify-center text-2xl mb-2 shadow-xs">
+                🏆
+              </div>
+              <h3 className="font-bubbly font-bold text-sm text-[#3D352E]">
+                No Ranked Players Yet!
+              </h3>
+              <p className="font-bubbly text-xs text-[#8C8074] max-w-sm mx-auto mt-1">
+                Play an online match with a registered account to claim the #1 spot on the genuine Hall of Fame!
+              </p>
             </div>
           ) : (
             sortedEntries.map((player, index) => {

@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { UserProfile } from '../types';
 import { api } from '../services/api';
 import { sound } from '../utils/audio';
-import { X, Palette, User, Trophy, Zap, Check, Flame } from 'lucide-react';
+import { X, User, Trophy, Zap, Flame, Sparkles } from 'lucide-react';
+import { AvatarPickerModal } from './AvatarPickerModal';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -11,21 +12,6 @@ interface ProfileModalProps {
   onUserUpdated: (user: UserProfile) => void;
   onLogout: () => void;
 }
-
-const PASTEL_COLOR_PRESETS = [
-  { name: 'Pastel Sky', hex: '#5BBFEA' },
-  { name: 'Pastel Strawberry', hex: '#FF8DA1' },
-  { name: 'Pastel Mint', hex: '#58C99E' },
-  { name: 'Pastel Peach', hex: '#FF9F68' },
-  { name: 'Pastel Lavender', hex: '#A389D4' },
-  { name: 'Pastel Butter', hex: '#F5B83D' },
-  { name: 'Pastel Bubblegum', hex: '#E679B5' },
-  { name: 'Pastel Sage', hex: '#82C29B' },
-  { name: 'Pastel Teal', hex: '#4DB6AC' },
-  { name: 'Pastel Periwinkle', hex: '#7E97E8' }
-];
-
-const AVATARS = ['🦊', '⚡', '🌸', '👑', '🎮', '🐱', '🚀', '🥑', '🧘‍♂️', '👾', '💎', '🍀', '🦄', '🎯', '🐻', '🌈'];
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({
   isOpen,
@@ -37,6 +23,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [displayName, setDisplayName] = useState(user.displayName);
   const [color, setColor] = useState(user.color);
   const [avatar, setAvatar] = useState(user.avatar);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -150,64 +137,38 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             <label className="block text-xs font-bubbly font-bold uppercase tracking-wider text-[#7A7067] mb-1.5">
               Avatar Icon
             </label>
-            <div className="grid grid-cols-8 gap-1.5 p-2 bg-[#FAF7F2] rounded-2xl border border-[#EFEAE1]">
-              {AVATARS.map((item) => (
-                <button
-                  type="button"
-                  key={item}
-                  onClick={() => setAvatar(item)}
-                  className={`text-lg p-1.5 rounded-xl transition-all ${
-                    avatar === item
-                      ? 'bg-white border-2 border-[#5BBFEA] scale-110 shadow-xs'
-                      : 'hover:bg-white/60'
-                  }`}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-bubbly font-bold uppercase tracking-wider text-[#7A7067] flex items-center gap-1.5">
-                <Palette className="w-3.5 h-3.5 text-[#5BBFEA]" />
-                Custom Line Colour
-              </label>
-              <span className="text-[11px] font-mono text-[#8C8074]">{color}</span>
-            </div>
-
-            <div className="grid grid-cols-5 gap-2 mb-2.5">
-              {PASTEL_COLOR_PRESETS.map((p) => (
-                <button
-                  key={p.hex}
-                  type="button"
-                  onClick={() => setColor(p.hex)}
-                  className={`h-8 rounded-xl flex items-center justify-center transition-all ${
-                    color.toLowerCase() === p.hex.toLowerCase()
-                      ? 'ring-2 ring-[#3D352E] scale-105 shadow-sm'
-                      : 'opacity-85 hover:opacity-100'
-                  }`}
-                  style={{ backgroundColor: p.hex }}
-                  title={p.name}
-                >
-                  {color.toLowerCase() === p.hex.toLowerCase() && (
-                    <Check className="w-4 h-4 text-white font-black" />
-                  )}
-                </button>
-              ))}
-            </div>
-
-            {/* Line Preview */}
-            <div className="p-2.5 bg-[#FAF7F2] border border-[#EFEAE1] rounded-2xl flex items-center justify-between">
-              <span className="text-xs text-[#7A7067] font-bubbly">In-Game Line Look:</span>
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between p-2.5 bg-[#FAF7F2] rounded-2xl border border-[#EFEAE1]">
+              <div className="flex items-center gap-3">
                 <div
-                  className="w-24 h-2 rounded-full shadow-xs transition-colors"
-                  style={{ backgroundColor: color }}
-                />
-                <span className="text-base">{avatar}</span>
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center text-2xl border shadow-xs"
+                  style={{
+                    borderColor: color,
+                    backgroundColor: `${color}20`
+                  }}
+                >
+                  {avatar}
+                </div>
+                <div>
+                  <span className="font-bubbly font-bold text-xs text-[#3D352E]">
+                    Current Avatar
+                  </span>
+                  <p className="text-[10px] text-[#8C8074]">
+                    Stamps your captured boxes
+                  </p>
+                </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playClick();
+                  setShowAvatarPicker(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-[#F2ECE3] border border-[#E8DFC8] rounded-xl text-xs font-bubbly font-bold text-[#5BBFEA] transition-all shadow-xs active:scale-95"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Change Avatar
+              </button>
             </div>
           </div>
 
@@ -233,6 +194,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </button>
           </div>
         </form>
+
+        <AvatarPickerModal
+          isOpen={showAvatarPicker}
+          onClose={() => setShowAvatarPicker(false)}
+          selectedAvatar={avatar}
+          onSelectAvatar={(a) => setAvatar(a)}
+          accentColor={color}
+        />
       </div>
     </div>
   );
