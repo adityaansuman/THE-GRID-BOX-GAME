@@ -28,7 +28,7 @@ export const DisconnectedModal: React.FC<DisconnectedModalProps> = ({
         </h3>
 
         <p className="font-bubbly text-xs text-[#8C8074] leading-relaxed mb-5">
-          Your network connection was interrupted. The match is continuing for remaining players. You can reconnect or head back to the main menu.
+          Your network connection was lost for more than 7 seconds. You can attempt to reconnect to resume, or head back to the main menu.
         </p>
 
         {/* Action Buttons */}

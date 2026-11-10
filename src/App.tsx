@@ -12,11 +12,13 @@ import { AuthModal } from './components/AuthModal';
 import { ProfileModal } from './components/ProfileModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { DisconnectedModal } from './components/DisconnectedModal';
-import { Volume2, VolumeX, LogOut, Clock, MessageSquare, Users, Grid, ArrowLeft } from 'lucide-react';
+import { MobileChatBubbles } from './components/MobileChatBubbles';
+import { Volume2, VolumeX, LogOut, Clock, MessageSquare, Users, ArrowLeft, Grid, RefreshCw, WifiOff } from 'lucide-react';
 
 export default function App() {
-  // Auth & Profile state
-  const [user, setUser] = useState<UserProfile | null>(null);
+  // Auth & Profile state - Synchronously initialize from stored account
+  const [user, setUser] = useState<UserProfile | null>(() => api.getUser());
+  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   const [guestName, setGuestName] = useState(() => {
     return localStorage.getItem('dotgrid_guest_name') || `Player_${Math.floor(Math.random() * 899 + 100)}`;
   });
@@ -29,6 +31,8 @@ export default function App() {
 
   // Modal states
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+  const [authModalDefaultUsername, setAuthModalDefaultUsername] = useState('');
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showLeaderboardModal, setShowLeaderboardModal] = useState(false);
   const [isMuted, setIsMuted] = useState(sound.getMuted());
@@ -40,6 +44,10 @@ export default function App() {
   const [screenShake, setScreenShake] = useState(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isWsDisconnected, setIsWsDisconnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [reconnectCountdown, setReconnectCountdown] = useState(7);
+  const reconnectIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const missedPingsRef = useRef(0);
 
   // Mobile layout tab switcher (for narrow screens)
   const [mobileTab, setMobileTab] = useState<'board' | 'players' | 'chat'>('board');
@@ -60,15 +68,55 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  const startDisconnectGraceBuffer = useCallback(() => {
+    if (!roomRef.current) return;
+    if (reconnectIntervalRef.current) return; // already active countdown
+
+    setIsReconnecting(true);
+    setReconnectCountdown(7);
+
+    reconnectIntervalRef.current = setInterval(() => {
+      setReconnectCountdown(prev => {
+        if (prev <= 1) {
+          if (reconnectIntervalRef.current) {
+            clearInterval(reconnectIntervalRef.current);
+            reconnectIntervalRef.current = null;
+          }
+          setIsReconnecting(false);
+          setIsWsDisconnected(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
+
+  const clearDisconnectGraceBuffer = useCallback(() => {
+    if (reconnectIntervalRef.current) {
+      clearInterval(reconnectIntervalRef.current);
+      reconnectIntervalRef.current = null;
+    }
+    setIsReconnecting(false);
+    setIsWsDisconnected(false);
+    setReconnectCountdown(7);
+    missedPingsRef.current = 0;
+  }, []);
+
   // Persistent login check - load immediately from cache and sync with server
   useEffect(() => {
     const cachedUser = api.getUser();
     if (cachedUser) {
       setUser(cachedUser);
+      setGuestName(cachedUser.displayName || cachedUser.username);
+      setGuestAvatar(cachedUser.avatar);
+      setGuestColor(cachedUser.color);
     }
     api.getMe().then((loggedInUser) => {
       if (loggedInUser) {
         setUser(loggedInUser);
+        setGuestName(loggedInUser.displayName || loggedInUser.username);
+        setGuestAvatar(loggedInUser.avatar);
+        setGuestColor(loggedInUser.color);
       }
     });
   }, []);
@@ -94,7 +142,8 @@ export default function App() {
 
     ws.onmessage = (event) => {
       if (event.data === 'pong') {
-        setIsWsDisconnected(false);
+        missedPingsRef.current = 0;
+        clearDisconnectGraceBuffer();
         return;
       }
       try {
@@ -105,6 +154,34 @@ export default function App() {
         } else if (evt === 'room:joined') {
           setRoom(payload.room);
           setMyPlayerId(payload.yourPlayerId);
+          clearDisconnectGraceBuffer();
+        } else if (evt === 'room:reconnected') {
+          setRoom(payload.room);
+          setMyPlayerId(payload.yourPlayerId);
+          clearDisconnectGraceBuffer();
+          showToast('✓ Reconnected to match!');
+        } else if (evt === 'room:reconnect_failed') {
+          clearDisconnectGraceBuffer();
+          setIsWsDisconnected(true);
+          showToast(payload.message || 'Match session ended.');
+        } else if (evt === 'player:disconnected_grace') {
+          setRoom(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              players: prev.players.map(p => p.id === payload.playerId ? { ...p, isDisconnected: true } : p)
+            };
+          });
+          showToast(`⚠️ ${payload.playerName} disconnected (holding match for ${payload.bufferSeconds}s)...`);
+        } else if (evt === 'player:reconnected') {
+          setRoom(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              players: prev.players.map(p => p.id === payload.playerId ? { ...p, isDisconnected: false } : p)
+            };
+          });
+          showToast(`✓ ${payload.playerName} reconnected!`);
         } else if (evt === 'room:player_joined') {
           setRoom(payload.room);
         } else if (evt === 'room:update_players') {
@@ -179,6 +256,9 @@ export default function App() {
           });
         } else if (evt === 'game:over') {
           setRoom(payload.room);
+          api.getMe().then(freshUser => {
+            if (freshUser) setUser(freshUser);
+          });
         } else if (evt === 'error') {
           showToast(payload.message || 'Action error');
         }
@@ -188,29 +268,42 @@ export default function App() {
     };
 
     ws.onopen = () => {
-      setIsWsDisconnected(false);
+      missedPingsRef.current = 0;
+      if (roomRef.current && myPlayerIdRef.current) {
+        // Automatic transparent reconnection within the 7s grace period
+        ws.send(JSON.stringify({
+          event: 'room:reconnect',
+          payload: {
+            roomCode: roomRef.current.code,
+            playerId: myPlayerIdRef.current,
+            userId: userRef.current?.id
+          }
+        }));
+      } else {
+        clearDisconnectGraceBuffer();
+      }
     };
 
     ws.onerror = () => {
       if (roomRef.current) {
-        setIsWsDisconnected(true);
+        startDisconnectGraceBuffer();
       }
     };
 
     ws.onclose = () => {
       if (roomRef.current) {
-        setIsWsDisconnected(true);
+        startDisconnectGraceBuffer();
       }
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = setTimeout(connectWebSocket, 1500);
+      reconnectTimeoutRef.current = setTimeout(connectWebSocket, 800);
     };
-  }, []);
+  }, [clearDisconnectGraceBuffer, startDisconnectGraceBuffer]);
 
   // Instant browser-level network drop detection
   useEffect(() => {
     const handleOffline = () => {
       if (roomRef.current) {
-        setIsWsDisconnected(true);
+        startDisconnectGraceBuffer();
       }
     };
     const handleOnline = () => {
@@ -224,28 +317,30 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('online', handleOnline);
     };
-  }, [connectWebSocket]);
+  }, [connectWebSocket, startDisconnectGraceBuffer]);
 
-  // Active client heartbeat to detect dropped network within 2s
+  // Active client heartbeat to detect genuine network drops (6s interval)
   useEffect(() => {
     const pingInterval = setInterval(() => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        if (roomRef.current) {
-          setIsWsDisconnected(true);
+        missedPingsRef.current++;
+        if (missedPingsRef.current >= 2 && roomRef.current) {
+          startDisconnectGraceBuffer();
         }
         return;
       }
       try {
         wsRef.current.send('ping');
       } catch {
-        if (roomRef.current) {
-          setIsWsDisconnected(true);
+        missedPingsRef.current++;
+        if (missedPingsRef.current >= 2 && roomRef.current) {
+          startDisconnectGraceBuffer();
         }
       }
-    }, 2000);
+    }, 6000);
 
     return () => clearInterval(pingInterval);
-  }, []);
+  }, [startDisconnectGraceBuffer]);
 
   useEffect(() => {
     connectWebSocket();
@@ -263,12 +358,15 @@ export default function App() {
     }
   };
 
-  const getActivePlayerPayload = () => ({
-    userId: user?.id,
-    name: user ? user.displayName : guestName,
-    color: user ? user.color : guestColor,
-    avatar: user ? user.avatar : guestAvatar,
-  });
+  const getActivePlayerPayload = () => {
+    const effective = user || api.getUser();
+    return {
+      userId: effective?.id,
+      name: effective ? (effective.displayName || effective.username) : guestName,
+      color: effective ? (effective.color || '#5BBFEA') : guestColor,
+      avatar: effective ? (effective.avatar || '🎮') : guestAvatar,
+    };
+  };
 
   const handleQuickPlay = () => {
     const openLobby = lobbies.find(l => l.state === 'lobby' && l.playerCount < l.maxPlayers);
@@ -368,6 +466,12 @@ export default function App() {
   const handleLogout = () => {
     api.clearToken();
     setUser(null);
+    setGuestName('Player');
+    setGuestAvatar('🦊');
+    setGuestColor('#5BBFEA');
+    localStorage.removeItem('dotgrid_guest_name');
+    localStorage.removeItem('dotgrid_guest_avatar');
+    localStorage.removeItem('dotgrid_guest_color');
   };
 
   const activePlayer = room?.players[room?.currentTurnIndex || 0];
@@ -382,6 +486,24 @@ export default function App() {
         </div>
       )}
 
+      {/* 7-Second Network Grace Buffer Banner */}
+      {isReconnecting && room && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 bg-[#FFF7ED] border-2 border-[#FDBA74] text-[#C2410C] font-bubbly font-bold text-xs px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2.5 animate-bounce">
+          <RefreshCw className="w-4 h-4 animate-spin text-[#EA580C]" />
+          <span>Wi-Fi signal blip! Reconnecting in background ({reconnectCountdown}s remaining)...</span>
+        </div>
+      )}
+
+      {/* Friend Disconnection Buffer Notice */}
+      {room && room.players.some(p => p.id !== myPlayerId && p.isDisconnected) && !isReconnecting && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-40 bg-[#FEF2F2] border-2 border-[#FECACA] text-[#DC2626] font-bubbly font-bold text-xs px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 animate-fade-in">
+          <WifiOff className="w-4 h-4 text-[#DC2626] animate-pulse" />
+          <span>
+            {room.players.find(p => p.id !== myPlayerId && p.isDisconnected)?.name} disconnected. Holding match for 7s...
+          </span>
+        </div>
+      )}
+
       {/* VIEW ROUTING */}
       {!room ? (
         /* Title Screen */
@@ -391,7 +513,11 @@ export default function App() {
           guestColor={guestColor}
           guestAvatar={guestAvatar}
           onUpdateGuest={handleUpdateGuest}
-          onOpenAuth={() => setShowAuthModal(true)}
+          onOpenAuth={(mode, defaultUsername) => {
+            setAuthModalMode(mode || 'login');
+            setAuthModalDefaultUsername(defaultUsername || '');
+            setShowAuthModal(true);
+          }}
           onOpenProfile={() => setShowProfileModal(true)}
           onOpenLeaderboard={() => setShowLeaderboardModal(true)}
           onQuickPlay={handleQuickPlay}
@@ -401,6 +527,7 @@ export default function App() {
           lobbies={lobbies}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
+          onLogout={handleLogout}
         />
       ) : room.state === 'lobby' ? (
         /* In-Room Lobby (Second Screen) */
@@ -453,21 +580,21 @@ export default function App() {
            - Grid in the centre
            - Fixed Chatbox at the right
         */
-        <div className="h-screen w-full flex flex-col justify-between overflow-hidden bg-[#FAF7F2]">
+        <div className="fixed inset-0 h-[100dvh] max-h-[100dvh] w-full flex flex-col justify-between overflow-hidden bg-[#FAF7F2]">
           {/* Aesthetic Cream White Minimal Top Header */}
-          <header className="relative z-30 px-5 py-3 bg-white/95 backdrop-blur-md border-b-2 border-[#EFEAE1] flex items-center justify-between gap-4 shadow-[0_2px_12px_rgba(180,160,140,0.06)] shrink-0">
+          <header className="relative z-30 px-3 sm:px-5 py-2 sm:py-2.5 bg-white/95 backdrop-blur-md border-b-2 border-[#EFEAE1] flex items-center justify-between gap-2 sm:gap-4 shadow-[0_2px_12px_rgba(180,160,140,0.06)] shrink-0">
             {/* Left: Leave & Room Info */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={() => {
                   sound.playClick();
                   handleLeaveRoom();
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-[#FAF7F2] hover:bg-[#FFF0F2] border-2 border-[#EFEAE1] hover:border-[#FFB7C5] text-[#8C8074] hover:text-[#D93856] font-bubbly font-bold text-xs transition-all active:scale-95 shadow-xs"
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-2xl bg-[#FAF7F2] hover:bg-[#FFF0F2] border-2 border-[#EFEAE1] hover:border-[#FFB7C5] text-[#8C8074] hover:text-[#D93856] font-bubbly font-bold text-xs transition-all active:scale-95 shadow-xs shrink-0"
                 title="Leave match"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span>Leave</span>
+                <span className="hidden xs:inline">Leave</span>
               </button>
 
               <div className="hidden sm:flex items-center gap-2">
@@ -481,37 +608,64 @@ export default function App() {
               </div>
             </div>
 
-            {/* Center: Turn Action Pill & Timer Readout */}
-            <div className="flex items-center gap-3">
+            {/* Center: Sleek Compact Turn Badge with Player Color & Timer (Replaces verbose text with color badge) */}
+            <div className="flex items-center gap-1.5 sm:gap-3">
               <div
-                className={`px-4 py-1.5 rounded-full border-2 text-xs font-bubbly font-bold flex items-center gap-2 transition-all shadow-xs ${
+                className={`px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-2xl border-2 text-xs font-bubbly font-bold flex items-center gap-1.5 sm:gap-2 transition-all shadow-xs ${
                   isMyTurn
-                    ? 'bg-[#EAF6FD] border-[#5BBFEA] text-[#24485D] animate-pulse'
+                    ? 'bg-[#EAF6FD] text-[#24485D] animate-pulse ring-2 ring-offset-1'
                     : 'bg-[#FAF7F2] border-[#EFEAE1] text-[#7A7067]'
                 }`}
+                style={{
+                  borderColor: isMyTurn ? (activePlayer?.color || '#5BBFEA') : '#EFEAE1',
+                  ['--tw-ring-color' as any]: isMyTurn ? (activePlayer?.color || '#5BBFEA') : undefined
+                }}
+                title={isMyTurn ? 'Your Turn' : `${activePlayer?.name}'s Turn`}
               >
-                <span className="text-base">{activePlayer?.avatar}</span>
-                <span>
-                  {isMyTurn ? 'Your Turn! Draw a line' : `${activePlayer?.name}'s Turn`}
-                </span>
+                {/* Active Player Avatar */}
+                <span className="text-sm sm:text-base leading-none">{activePlayer?.avatar}</span>
+
+                {/* Vibrant Line Color Bar indicator */}
+                <div
+                  className="w-5 sm:w-8 h-2 sm:h-2.5 rounded-full border border-black/10 shadow-xs shrink-0 transition-colors"
+                  style={{ backgroundColor: activePlayer?.color || '#5BBFEA' }}
+                  title={`${activePlayer?.name}'s line color`}
+                />
+
+                {/* Compact Turn Tag */}
+                {isMyTurn ? (
+                  <span
+                    className="text-[10px] sm:text-xs font-bubbly font-bold px-1.5 py-0.2 rounded-md tracking-wide"
+                    style={{
+                      color: activePlayer?.color || '#5BBFEA',
+                      backgroundColor: `${activePlayer?.color || '#5BBFEA'}22`
+                    }}
+                  >
+                    You
+                  </span>
+                ) : (
+                  <span className="hidden sm:inline text-xs text-[#7A7067] font-bubbly truncate max-w-[80px]">
+                    {activePlayer?.name}
+                  </span>
+                )}
               </div>
 
               {room.turnTimeLimit > 0 && (
                 <div
-                  className={`flex items-center gap-1 font-mono text-xs font-bold px-3 py-1.5 rounded-2xl border-2 ${
+                  className={`flex items-center gap-1 font-mono text-[11px] sm:text-xs font-bold px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-2xl border-2 shrink-0 ${
                     room.turnTimeRemaining <= 5
                       ? 'bg-[#FFF0F2] border-[#FF8DA1] text-[#D93856] animate-ping'
                       : 'bg-white border-[#EFEAE1] text-[#7A7067]'
                   }`}
                 >
-                  <Clock className="w-3.5 h-3.5" />
+                  <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                   <span className="tabular-nums">{room.turnTimeRemaining}s</span>
                 </div>
               )}
             </div>
 
-            {/* Right: Sound Toggle & Mobile Tab Selector */}
-            <div className="flex items-center gap-2">
+            {/* Right: Sound Toggle & Desktop Sidebar Toggles */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
               {/* Desktop-only Sidebar Toggles */}
               <button
                 type="button"
@@ -566,26 +720,9 @@ export default function App() {
               2. Grid (in the centre, dynamically expands)
               3. Chatbox (fixed at the right, collapsible)
           */}
-          <main className="relative flex-1 flex items-center justify-between p-2 sm:p-5 gap-3 sm:gap-4 overflow-hidden">
-            {/* 1. PARTICIPANT LIST (COLLAPSIBLE / EXPANDABLE) */}
-            <div
-              className={`h-full transition-all duration-300 ease-out ${
-                mobileTab === 'players' ? 'flex flex-col w-full absolute inset-2 z-30' : 'hidden md:flex'
-              }`}
-            >
-              {mobileTab === 'players' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playClick();
-                    setMobileTab('board');
-                  }}
-                  className="md:hidden mb-2 py-2.5 px-4 bg-white text-[#5BBFEA] border-2 border-[#C5E7FA] font-bubbly font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-xs active:scale-95"
-                >
-                  <Grid className="w-4 h-4" />
-                  <span>Return to Grid Board</span>
-                </button>
-              )}
+          <main className="relative flex-1 min-h-0 w-full flex items-center justify-between p-1 sm:p-4 gap-2 sm:gap-4 overflow-hidden">
+            {/* 1. PARTICIPANT LIST (DESKTOP SIDEBAR) */}
+            <div className="hidden md:flex h-full min-h-0 transition-all duration-300 ease-out">
               <ParticipantList
                 room={room}
                 myPlayerId={myPlayerId}
@@ -594,12 +731,8 @@ export default function App() {
               />
             </div>
 
-            {/* 2. GRID IN THE CENTRE (EXPANDS SMOOTHLY WHEN SIDEBARS ARE MINIMIZED) */}
-            <div
-              className={`flex-1 h-full flex items-center justify-center relative overflow-hidden transition-all duration-300 ease-out ${
-                mobileTab === 'board' ? 'flex' : 'hidden md:flex'
-              }`}
-            >
+            {/* 2. GRID IN THE CENTRE (ALWAYS VISIBLE & PLAYABLE ON MOBILE & DESKTOP) */}
+            <div className="flex-1 h-full min-h-0 flex items-center justify-center relative overflow-hidden transition-all duration-300 ease-out">
               <Board
                 room={room}
                 myPlayerId={myPlayerId}
@@ -610,25 +743,8 @@ export default function App() {
               />
             </div>
 
-            {/* 3. CHATBOX AT THE RIGHT (COLLAPSIBLE / EXPANDABLE) */}
-            <div
-              className={`h-full transition-all duration-300 ease-out ${
-                mobileTab === 'chat' ? 'flex flex-col w-full absolute inset-2 z-30' : 'hidden md:flex'
-              }`}
-            >
-              {mobileTab === 'chat' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playClick();
-                    setMobileTab('board');
-                  }}
-                  className="md:hidden mb-2 py-2.5 px-4 bg-white text-[#5BBFEA] border-2 border-[#C5E7FA] font-bubbly font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-xs active:scale-95"
-                >
-                  <Grid className="w-4 h-4" />
-                  <span>Return to Grid Board</span>
-                </button>
-              )}
+            {/* 3. CHATBOX (DESKTOP SIDEBAR) */}
+            <div className="hidden md:flex h-full transition-all duration-300 ease-out">
               <ChatBox
                 messages={room.chatMessages}
                 onSendMessage={handleSendChat}
@@ -639,15 +755,58 @@ export default function App() {
                 onToggleMinimize={() => setIsChatMinimized(!isChatMinimized)}
               />
             </div>
+
+            {/* MOBILE FLOATING CHAT BUBBLES & QUICK COMPOSER (Play and chat simultaneously) */}
+            <MobileChatBubbles
+              messages={room.chatMessages}
+              onSendMessage={handleSendChat}
+              players={room.players}
+              myPlayerId={myPlayerId}
+              isInputOpen={isMobileChatOpen}
+              onToggleInput={setIsMobileChatOpen}
+            />
+
+            {/* MOBILE PARTICIPANTS DRAWER / OVERLAY */}
+            {mobileTab === 'players' && (
+              <div className="md:hidden fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col justify-end p-3 animate-fade-in">
+                <div className="bg-white border-2 border-[#EFEAE1] rounded-3xl p-4 max-h-[75vh] flex flex-col shadow-2xl">
+                  <div className="flex items-center justify-between pb-3 mb-2 border-b border-[#F0EAE1]">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-[#5BBFEA]" />
+                      <span className="font-bubbly font-bold text-sm text-[#3D352E]">
+                        Room Players ({room.players.length}/{room.maxPlayers})
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sound.playClick();
+                        setMobileTab('board');
+                      }}
+                      className="px-3 py-1.5 bg-[#FAF7F2] hover:bg-[#EAF6FD] text-[#5BBFEA] font-bubbly font-bold text-xs rounded-xl border border-[#EFEAE1]"
+                    >
+                      Close Roster
+                    </button>
+                  </div>
+                  <div className="overflow-y-auto max-h-[60vh]">
+                    <ParticipantList
+                      room={room}
+                      myPlayerId={myPlayerId}
+                      isMinimized={false}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </main>
 
-          {/* Mobile Bottom Navigation Bar (App-Style Tabs) */}
+          {/* Mobile Bottom Navigation Bar (Non-intrusive) */}
           <nav className="flex md:hidden items-center justify-around px-3 py-1.5 bg-white/95 backdrop-blur-md border-t-2 border-[#EFEAE1] shadow-[0_-2px_12px_rgba(180,160,140,0.06)] shrink-0 z-40">
             <button
               type="button"
               onClick={() => {
                 sound.playClick();
-                setMobileTab('players');
+                setMobileTab(mobileTab === 'players' ? 'board' : 'players');
               }}
               className={`flex-1 py-1.5 flex flex-col items-center gap-0.5 rounded-2xl transition-all active:scale-95 ${
                 mobileTab === 'players'
@@ -669,9 +828,10 @@ export default function App() {
               onClick={() => {
                 sound.playClick();
                 setMobileTab('board');
+                setIsMobileChatOpen(false);
               }}
               className={`flex-1 py-1.5 flex flex-col items-center gap-0.5 rounded-2xl transition-all active:scale-95 ${
-                mobileTab === 'board'
+                mobileTab === 'board' && !isMobileChatOpen
                   ? 'text-[#5BBFEA] font-bold bg-[#EAF6FD]'
                   : 'text-[#8C8074] hover:text-[#3D352E]'
               }`}
@@ -684,10 +844,11 @@ export default function App() {
               type="button"
               onClick={() => {
                 sound.playClick();
-                setMobileTab('chat');
+                setIsMobileChatOpen(!isMobileChatOpen);
+                setMobileTab('board');
               }}
               className={`flex-1 py-1.5 flex flex-col items-center gap-0.5 rounded-2xl transition-all active:scale-95 ${
-                mobileTab === 'chat'
+                isMobileChatOpen
                   ? 'text-[#5BBFEA] font-bold bg-[#EAF6FD]'
                   : 'text-[#8C8074] hover:text-[#3D352E]'
               }`}
@@ -700,7 +861,7 @@ export default function App() {
                   </span>
                 )}
               </div>
-              <span className="font-bubbly text-[10px]">Chat</span>
+              <span className="font-bubbly text-[10px]">{isMobileChatOpen ? 'Close Chat' : 'Quick Chat'}</span>
             </button>
           </nav>
 
@@ -717,9 +878,25 @@ export default function App() {
       {/* Global Modals */}
       <AuthModal
         isOpen={showAuthModal}
+        initialMode={authModalMode}
+        defaultUsername={authModalDefaultUsername}
         onClose={() => setShowAuthModal(false)}
         onAuthenticated={(loggedInUser) => {
           setUser(loggedInUser);
+          setGuestName(loggedInUser.displayName || loggedInUser.username);
+          setGuestAvatar(loggedInUser.avatar);
+          setGuestColor(loggedInUser.color);
+          localStorage.setItem('dotgrid_guest_name', loggedInUser.displayName || loggedInUser.username);
+          localStorage.setItem('dotgrid_guest_avatar', loggedInUser.avatar);
+          localStorage.setItem('dotgrid_guest_color', loggedInUser.color);
+          if (roomRef.current) {
+            sendWs('room:update_profile', {
+              userId: loggedInUser.id,
+              name: loggedInUser.displayName,
+              color: loggedInUser.color,
+              avatar: loggedInUser.avatar
+            });
+          }
         }}
       />
 
@@ -728,7 +905,17 @@ export default function App() {
           isOpen={showProfileModal}
           onClose={() => setShowProfileModal(false)}
           user={user}
-          onUserUpdated={(updated) => setUser(updated)}
+          onUserUpdated={(updated) => {
+            setUser(updated);
+            if (roomRef.current) {
+              sendWs('room:update_profile', {
+                userId: updated.id,
+                name: updated.displayName,
+                color: updated.color,
+                avatar: updated.avatar
+              });
+            }
+          }}
           onLogout={handleLogout}
         />
       )}

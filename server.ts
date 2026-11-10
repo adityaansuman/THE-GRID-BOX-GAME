@@ -18,8 +18,11 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const USERS_BACKUP_FILE = path.join(DATA_DIR, 'users.backup.json');
 const LEADERBOARD_FILE = path.join(DATA_DIR, 'leaderboard.json');
+const LEADERBOARD_BACKUP_FILE = path.join(DATA_DIR, 'leaderboard.backup.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const SESSIONS_BACKUP_FILE = path.join(DATA_DIR, 'sessions.backup.json');
 
 // Types
 export interface UserAccount {
@@ -60,22 +63,56 @@ export interface LeaderboardEntry {
   winRate: number;
 }
 
-// Persistent Store Helpers
+// Persistent Store Helpers with Automatic Backup & Anti-Wipe Protection
 function loadUsers(): Record<string, UserAccount> {
   try {
     if (fs.existsSync(USERS_FILE)) {
-      const content = fs.readFileSync(USERS_FILE, 'utf-8');
-      return JSON.parse(content);
+      const content = fs.readFileSync(USERS_FILE, 'utf-8').trim();
+      if (content && content !== '{}') {
+        const parsed = JSON.parse(content);
+        if (Object.keys(parsed).length > 0) return parsed;
+      }
     }
   } catch (err) {
-    console.error('Error loading users:', err);
+    console.error('Error loading users file:', err);
   }
+
+  // Fallback to backup if primary was temporarily removed or empty
+  try {
+    if (fs.existsSync(USERS_BACKUP_FILE)) {
+      const backupContent = fs.readFileSync(USERS_BACKUP_FILE, 'utf-8').trim();
+      if (backupContent && backupContent !== '{}') {
+        const parsedBackup = JSON.parse(backupContent);
+        if (Object.keys(parsedBackup).length > 0) {
+          try {
+            fs.writeFileSync(USERS_FILE, backupContent, 'utf-8');
+          } catch {}
+          return parsedBackup;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error restoring users from backup:', err);
+  }
+
   return {};
 }
 
-function saveUsers(users: Record<string, UserAccount>) {
+function saveUsers(newUsers: Record<string, UserAccount>) {
   try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
+    // Safety check: Never wipe existing player database with an empty object
+    if (Object.keys(newUsers).length === 0 && fs.existsSync(USERS_FILE)) {
+      const currentRaw = fs.readFileSync(USERS_FILE, 'utf-8').trim();
+      if (currentRaw && currentRaw !== '{}') {
+        return; // Guard existing accounts from accidental wipe
+      }
+    }
+
+    const payload = JSON.stringify(newUsers, null, 2);
+    fs.writeFileSync(USERS_FILE, payload, 'utf-8');
+    try {
+      fs.writeFileSync(USERS_BACKUP_FILE, payload, 'utf-8');
+    } catch {}
   } catch (err) {
     console.error('Error saving users:', err);
   }
@@ -84,18 +121,35 @@ function saveUsers(users: Record<string, UserAccount>) {
 function loadSessions(): Record<string, string> {
   try {
     if (fs.existsSync(SESSIONS_FILE)) {
-      const content = fs.readFileSync(SESSIONS_FILE, 'utf-8');
-      return JSON.parse(content);
+      const content = fs.readFileSync(SESSIONS_FILE, 'utf-8').trim();
+      if (content && content !== '{}') {
+        const parsed = JSON.parse(content);
+        if (Object.keys(parsed).length > 0) return parsed;
+      }
     }
   } catch (err) {
     console.error('Error loading sessions:', err);
   }
+
+  try {
+    if (fs.existsSync(SESSIONS_BACKUP_FILE)) {
+      const backupContent = fs.readFileSync(SESSIONS_BACKUP_FILE, 'utf-8').trim();
+      if (backupContent && backupContent !== '{}') {
+        return JSON.parse(backupContent);
+      }
+    }
+  } catch {}
+
   return {};
 }
 
 function saveSessions(sess: Record<string, string>) {
   try {
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sess, null, 2), 'utf-8');
+    const payload = JSON.stringify(sess, null, 2);
+    fs.writeFileSync(SESSIONS_FILE, payload, 'utf-8');
+    try {
+      fs.writeFileSync(SESSIONS_BACKUP_FILE, payload, 'utf-8');
+    } catch {}
   } catch (err) {
     console.error('Error saving sessions:', err);
   }
@@ -129,41 +183,59 @@ function saveLeaderboard(leaderboard: LeaderboardEntry[]) {
 }
 
 let users = loadUsers();
-// Strictly genuine logged-in accounts only: purge any bots or invalid entries
-let leaderboard = loadLeaderboard().filter(e => e.userId && !e.userId.startsWith('bot_') && users[e.userId]);
+
+// Dynamically compute genuine leaderboard directly from persistent registered accounts
+export function getComputedLeaderboard(): LeaderboardEntry[] {
+  const currentUsers = loadUsers();
+  const entries: LeaderboardEntry[] = [];
+
+  for (const u of Object.values(currentUsers)) {
+    // Strictly genuine registered accounts only (never bots, must have valid user id)
+    if (!u || !u.id || u.id.startsWith('bot_')) continue;
+
+    const stats = u.stats || {
+      wins: 0,
+      losses: 0,
+      ties: 0,
+      gamesPlayed: 0,
+      boxesClaimed: 0,
+      highestCombo: 0,
+      totalScore: 0,
+      winStreak: 0,
+      bestWinStreak: 0
+    };
+
+    const gamesPlayed = stats.gamesPlayed || 0;
+    const wins = stats.wins || 0;
+    const winRate = gamesPlayed > 0 ? Math.round((wins / gamesPlayed) * 100) : 0;
+
+    entries.push({
+      userId: u.id,
+      username: u.username,
+      displayName: u.displayName || u.username,
+      avatar: u.avatar || '🎮',
+      color: u.color || '#5BBFEA',
+      wins,
+      boxesClaimed: stats.boxesClaimed || 0,
+      totalScore: stats.totalScore || 0,
+      highestCombo: stats.highestCombo || 0,
+      winStreak: stats.bestWinStreak || stats.winStreak || 0,
+      gamesPlayed,
+      winRate
+    });
+  }
+
+  // Sort descending by totalScore, then wins, then boxes claimed
+  entries.sort((a, b) => (b.totalScore - a.totalScore) || (b.wins - a.wins) || (b.boxesClaimed - a.boxesClaimed));
+  return entries;
+}
+
+let leaderboard = getComputedLeaderboard();
 saveLeaderboard(leaderboard);
 
 function updateLeaderboardForUser(user: UserAccount) {
-  if (!user || !user.id || !users[user.id] || user.id.startsWith('bot_')) return;
-
-  const existingIndex = leaderboard.findIndex(entry => entry.userId === user.id);
-  const winRate = user.stats.gamesPlayed > 0 
-    ? Math.round((user.stats.wins / user.stats.gamesPlayed) * 100) 
-    : 0;
-
-  const entry: LeaderboardEntry = {
-    userId: user.id,
-    username: user.username,
-    displayName: user.displayName,
-    avatar: user.avatar,
-    color: user.color,
-    wins: user.stats.wins,
-    boxesClaimed: user.stats.boxesClaimed,
-    totalScore: user.stats.totalScore,
-    highestCombo: user.stats.highestCombo,
-    winStreak: user.stats.bestWinStreak,
-    gamesPlayed: user.stats.gamesPlayed,
-    winRate
-  };
-
-  if (existingIndex >= 0) {
-    leaderboard[existingIndex] = entry;
-  } else {
-    leaderboard.push(entry);
-  }
-
-  // Sort by totalScore desc, then wins desc
-  leaderboard.sort((a, b) => b.totalScore - a.totalScore || b.wins - a.wins || b.boxesClaimed - a.boxesClaimed);
+  if (!user || !user.id || user.id.startsWith('bot_')) return;
+  leaderboard = getComputedLeaderboard();
   saveLeaderboard(leaderboard);
 }
 
@@ -177,22 +249,38 @@ function generateToken(): string {
 // REST Endpoints
 app.post('/api/auth/google', (req, res) => {
   const { email, name, avatar } = req.body;
-  const googleEmail = (email || `player_${Date.now()}@gmail.com`).toLowerCase().trim();
-  const rawUsername = googleEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15) || 'player';
+  const currentUsers = loadUsers();
+  
+  const cleanEmail = (email || '').toLowerCase().trim();
+  const cleanName = (name || '').trim();
+  
+  if (!cleanEmail && !cleanName) {
+    res.status(400).json({ error: 'Please provide a Google email or account name.' });
+    return;
+  }
 
-  // Find existing user by email or username
-  let user = Object.values(users).find(u => (u.email && u.email.toLowerCase() === googleEmail) || u.username.toLowerCase() === rawUsername);
+  // Derive stable username from email or name
+  const rawUsername = cleanEmail 
+    ? cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15) 
+    : cleanName.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 15);
+
+  // Look for existing user across all devices by email, username, or displayName
+  let user = Object.values(currentUsers).find(u => 
+    (cleanEmail && u.email && u.email.toLowerCase() === cleanEmail) || 
+    (rawUsername && u.username.toLowerCase() === rawUsername) ||
+    (cleanName && u.displayName && u.displayName.toLowerCase() === cleanName.toLowerCase())
+  );
 
   if (!user) {
     const id = 'usr_g_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     user = {
       id,
-      username: rawUsername,
-      email: googleEmail,
+      username: rawUsername || 'player',
+      email: cleanEmail || `${rawUsername}@gmail.com`,
       passwordHash: 'google_oauth_authenticated',
-      displayName: (name || rawUsername).trim().substring(0, 20),
+      displayName: (cleanName || rawUsername || 'Player').substring(0, 20),
       color: '#5BBFEA',
-      avatar: avatar || '⚡',
+      avatar: avatar || '🦊',
       createdAt: Date.now(),
       lastLoginAt: Date.now(),
       stats: {
@@ -207,18 +295,26 @@ app.post('/api/auth/google', (req, res) => {
         bestWinStreak: 0,
       }
     };
-    users[id] = user;
-    saveUsers(users);
-    updateLeaderboardForUser(user);
+    currentUsers[id] = user;
+    saveUsers(currentUsers);
   } else {
     user.lastLoginAt = Date.now();
-    if (name && !user.displayName) user.displayName = name.trim().substring(0, 20);
-    saveUsers(users);
+    if (cleanEmail && !user.email) user.email = cleanEmail;
+    if (cleanName && (!user.displayName || user.displayName.startsWith('player_'))) {
+      user.displayName = cleanName.substring(0, 20);
+    }
+    saveUsers(currentUsers);
   }
+  users = currentUsers;
 
+  const currentSessions = loadSessions();
   const token = generateToken();
+  currentSessions[token] = user.id;
+  saveSessions(currentSessions);
   sessions[token] = user.id;
-  saveSessions(sessions);
+
+  leaderboard = getComputedLeaderboard();
+  saveLeaderboard(leaderboard);
 
   const { passwordHash: _, ...safeUser } = user;
   res.json({ token, user: safeUser });
@@ -231,15 +327,41 @@ app.post('/api/auth/register', (req, res) => {
     return;
   }
   const cleanUsername = username.trim().toLowerCase();
-  if (cleanUsername.length < 3) {
-    res.status(400).json({ error: 'Username must be at least 3 characters' });
+  if (cleanUsername.length < 2) {
+    res.status(400).json({ error: 'Username must be at least 2 characters' });
     return;
   }
 
-  // Check if exists
-  for (const u of Object.values(users)) {
-    if (u.username.toLowerCase() === cleanUsername) {
-      res.status(409).json({ error: 'Username is already taken' });
+  const currentUsers = loadUsers();
+  
+  // Check if account already exists with this username, email, or displayName
+  const existingUser = Object.values(currentUsers).find(u => 
+    u.username.toLowerCase() === cleanUsername || 
+    (u.email && u.email.toLowerCase() === cleanUsername) ||
+    (u.displayName && u.displayName.toLowerCase() === cleanUsername) ||
+    (displayName && u.displayName && u.displayName.toLowerCase() === displayName.trim().toLowerCase())
+  );
+
+  if (existingUser) {
+    // Smart user system: If the user provides the correct password for their account, log them straight in!
+    if (existingUser.passwordHash === password || existingUser.passwordHash === 'google_oauth_authenticated') {
+      existingUser.lastLoginAt = Date.now();
+      saveUsers(currentUsers);
+      users = currentUsers;
+
+      const currentSessions = loadSessions();
+      const token = generateToken();
+      currentSessions[token] = existingUser.id;
+      saveSessions(currentSessions);
+      sessions[token] = existingUser.id;
+
+      const { passwordHash: _, ...safeUser } = existingUser;
+      res.json({ token, user: safeUser, message: 'Welcome back! Logged into your existing profile.' });
+      return;
+    } else {
+      res.status(409).json({ 
+        error: `Account "${existingUser.displayName || existingUser.username}" already exists! Switch to the Sign In tab to log in.` 
+      });
       return;
     }
   }
@@ -248,7 +370,7 @@ app.post('/api/auth/register', (req, res) => {
   const newUser: UserAccount = {
     id,
     username: cleanUsername,
-    passwordHash: password, // In production this would be hashed with bcrypt; for game credentials simple hash is fine
+    passwordHash: password,
     displayName: (displayName || username).trim().substring(0, 20),
     color: color || '#5BBFEA',
     avatar: avatar || '🎮',
@@ -267,13 +389,18 @@ app.post('/api/auth/register', (req, res) => {
     }
   };
 
-  users[id] = newUser;
-  saveUsers(users);
-  updateLeaderboardForUser(newUser);
+  currentUsers[id] = newUser;
+  saveUsers(currentUsers);
+  users = currentUsers;
 
+  const currentSessions = loadSessions();
   const token = generateToken();
+  currentSessions[token] = id;
+  saveSessions(currentSessions);
   sessions[token] = id;
-  saveSessions(sessions);
+
+  leaderboard = getComputedLeaderboard();
+  saveLeaderboard(leaderboard);
 
   const { passwordHash: _, ...safeUser } = newUser;
   res.json({ token, user: safeUser });
@@ -282,23 +409,42 @@ app.post('/api/auth/register', (req, res) => {
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
-    res.status(400).json({ error: 'Username and password are required' });
+    res.status(400).json({ error: 'Username, Email, or Nickname and password are required' });
     return;
   }
-  const cleanUsername = username.trim().toLowerCase();
-  const user = Object.values(users).find(u => u.username.toLowerCase() === cleanUsername);
+  const cleanInput = username.trim().toLowerCase();
+  const currentUsers = loadUsers();
+  
+  // Find user by username, email, OR display name (case-insensitive)
+  const user = Object.values(currentUsers).find(u => 
+    u.username.toLowerCase() === cleanInput || 
+    (u.email && u.email.toLowerCase() === cleanInput) ||
+    (u.displayName && u.displayName.toLowerCase() === cleanInput)
+  );
 
-  if (!user || user.passwordHash !== password) {
-    res.status(401).json({ error: 'Invalid username or password' });
+  if (!user) {
+    res.status(401).json({ 
+      error: `No account found for "${username.trim()}". Please check your spelling or switch to New Account to create it.` 
+    });
+    return;
+  }
+
+  // Allow login if password matches, or if user was authenticated with Google
+  const isGoogleAccount = user.passwordHash === 'google_oauth_authenticated';
+  if (!isGoogleAccount && user.passwordHash !== password) {
+    res.status(401).json({ error: 'Incorrect password. Please try again.' });
     return;
   }
 
   user.lastLoginAt = Date.now();
-  saveUsers(users);
+  saveUsers(currentUsers);
+  users = currentUsers;
 
+  const currentSessions = loadSessions();
   const token = generateToken();
+  currentSessions[token] = user.id;
+  saveSessions(currentSessions);
   sessions[token] = user.id;
-  saveSessions(sessions);
 
   const { passwordHash: _, ...safeUser } = user;
   res.json({ token, user: safeUser });
@@ -311,12 +457,14 @@ app.get('/api/auth/me', (req, res) => {
     return;
   }
   const token = authHeader.replace('Bearer ', '').trim();
-  const userId = sessions[token];
-  if (!userId || !users[userId]) {
+  const currentSessions = loadSessions();
+  const userId = currentSessions[token] || sessions[token];
+  const currentUsers = loadUsers();
+  if (!userId || !currentUsers[userId]) {
     res.status(401).json({ error: 'Invalid or expired session' });
     return;
   }
-  const { passwordHash: _, ...safeUser } = users[userId];
+  const { passwordHash: _, ...safeUser } = currentUsers[userId];
   res.json({ user: safeUser });
 });
 
@@ -327,27 +475,34 @@ app.post('/api/auth/profile', (req, res) => {
     return;
   }
   const token = authHeader.replace('Bearer ', '').trim();
-  const userId = sessions[token];
-  if (!userId || !users[userId]) {
+  const currentSessions = loadSessions();
+  const userId = currentSessions[token] || sessions[token];
+  const currentUsers = loadUsers();
+  if (!userId || !currentUsers[userId]) {
     res.status(401).json({ error: 'Invalid session' });
     return;
   }
 
   const { displayName, color, avatar } = req.body;
-  const user = users[userId];
+  const user = currentUsers[userId];
   if (displayName) user.displayName = displayName.trim().substring(0, 20);
   if (color) user.color = color;
   if (avatar) user.avatar = avatar;
 
-  saveUsers(users);
-  updateLeaderboardForUser(user);
+  saveUsers(currentUsers);
+  users = currentUsers;
+  leaderboard = getComputedLeaderboard();
+  saveLeaderboard(leaderboard);
 
   const { passwordHash: _, ...safeUser } = user;
   res.json({ user: safeUser });
 });
 
 app.get('/api/leaderboard', (_req, res) => {
-  res.json({ leaderboard });
+  const freshLeaderboard = getComputedLeaderboard();
+  leaderboard = freshLeaderboard;
+  saveLeaderboard(freshLeaderboard);
+  res.json({ leaderboard: freshLeaderboard });
 });
 
 // Rooms Management
@@ -470,24 +625,30 @@ function sanitizeRoom(room: GameRoom) {
   return rest;
 }
 
+let broadcastLobbiesTimer: NodeJS.Timeout | null = null;
 function broadcastLobbies() {
-  const publicList = Array.from(rooms.values())
-    .filter(r => r.isPublic)
-    .map(r => ({
-      code: r.code,
-      name: r.name,
-      playerCount: r.players.length,
-      maxPlayers: r.maxPlayers,
-      grid: `${r.gridRows}x${r.gridCols}`,
-      state: r.state
-    }));
+  if (broadcastLobbiesTimer) clearTimeout(broadcastLobbiesTimer);
+  broadcastLobbiesTimer = setTimeout(() => {
+    const publicList = Array.from(rooms.values())
+      .filter(r => r.isPublic)
+      .map(r => ({
+        code: r.code,
+        name: r.name,
+        playerCount: r.players.length,
+        maxPlayers: r.maxPlayers,
+        grid: `${r.gridRows}x${r.gridCols}`,
+        state: r.state
+      }));
 
-  const msg = JSON.stringify({ event: 'lobbies:list', payload: publicList });
-  for (const ws of clientRooms.keys()) {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(msg);
+    const msg = JSON.stringify({ event: 'lobbies:list', payload: publicList });
+    if (typeof wss !== 'undefined' && wss && wss.clients) {
+      for (const client of wss.clients) {
+        if (client.readyState === WebSocket.OPEN && !clientRooms.has(client)) {
+          client.send(msg);
+        }
+      }
     }
-  }
+  }, 100);
 }
 
 app.get('/api/rooms', (_req, res) => {
@@ -672,40 +833,75 @@ function endGame(room: GameRoom) {
   room.winners = winners;
 
   // Record stats only for genuine logged-in accounts (never bots, never guests)
+  const currentUsers = loadUsers();
   const isTie = winners.length > 1;
+
   for (const p of room.players) {
-    if (p.userId && users[p.userId] && !p.isBot && !p.id.startsWith('bot_')) {
-      const u = users[p.userId];
-      u.stats.gamesPlayed += 1;
-      u.stats.boxesClaimed += p.score;
-      u.stats.totalScore += p.score * 10;
+    if (p.isBot || p.id.startsWith('bot_')) continue;
+
+    // Match registered user by userId OR fallback to username/displayName
+    let u: UserAccount | undefined;
+    if (p.userId && currentUsers[p.userId]) {
+      u = currentUsers[p.userId];
+    } else {
+      u = Object.values(currentUsers).find(acc => 
+        (acc.username && acc.username.toLowerCase() === p.name.toLowerCase()) ||
+        (acc.displayName && acc.displayName.toLowerCase() === p.name.toLowerCase())
+      );
+      if (u) {
+        p.userId = u.id;
+      }
+    }
+
+    if (u) {
+      if (!u.stats) {
+        u.stats = {
+          wins: 0,
+          losses: 0,
+          ties: 0,
+          gamesPlayed: 0,
+          boxesClaimed: 0,
+          highestCombo: 0,
+          totalScore: 0,
+          winStreak: 0,
+          bestWinStreak: 0,
+        };
+      }
+      u.stats.gamesPlayed = (u.stats.gamesPlayed || 0) + 1;
+      u.stats.boxesClaimed = (u.stats.boxesClaimed || 0) + (p.score || 0);
+      u.stats.totalScore = (u.stats.totalScore || 0) + (p.score || 0) * 10;
 
       const isWinner = winners.some(w => w.id === p.id);
       if (isWinner && !isTie) {
-        u.stats.wins += 1;
-        u.stats.winStreak += 1;
-        if (u.stats.winStreak > u.stats.bestWinStreak) {
+        u.stats.wins = (u.stats.wins || 0) + 1;
+        u.stats.winStreak = (u.stats.winStreak || 0) + 1;
+        if (u.stats.winStreak > (u.stats.bestWinStreak || 0)) {
           u.stats.bestWinStreak = u.stats.winStreak;
         }
         u.stats.totalScore += 50; // Victory bonus
       } else if (isTie) {
-        u.stats.ties += 1;
+        u.stats.ties = (u.stats.ties || 0) + 1;
         u.stats.winStreak = 0;
         u.stats.totalScore += 20;
       } else {
-        u.stats.losses += 1;
+        u.stats.losses = (u.stats.losses || 0) + 1;
         u.stats.winStreak = 0;
       }
-      saveUsers(users);
-      updateLeaderboardForUser(u);
     }
   }
 
-  // No chat announcement - HUD displays game over modal
+  saveUsers(currentUsers);
+  users = currentUsers;
+
+  const freshLeaderboard = getComputedLeaderboard();
+  saveLeaderboard(freshLeaderboard);
+  leaderboard = freshLeaderboard;
+
+  // Broadcast fresh room state and leaderboard
   broadcastToRoom(room, 'game:over', {
     winners,
     room: sanitizeRoom(room),
-    leaderboard
+    leaderboard: freshLeaderboard
   });
   broadcastLobbies();
 }
@@ -873,6 +1069,10 @@ function getUniqueColorForPlayer(existingPlayers: Player[], preferredColor?: str
   return preferredColor || '#5BBFEA';
 }
 
+// Disconnect Grace Period Buffer (7 Seconds)
+// Gives disconnected players 7 seconds to restore their network before forfeiting or ending match
+const disconnectGraceTimers = new Map<string, NodeJS.Timeout>();
+
 function handleClientDisconnect(ws: WebSocket) {
   const info = clientRooms.get(ws);
   if (!info) return;
@@ -881,7 +1081,62 @@ function handleClientDisconnect(ws: WebSocket) {
   const room = rooms.get(info.roomCode);
   if (!room) return;
 
-  const playerIdx = room.players.findIndex(p => p.id === info.playerId);
+  const player = room.players.find(p => p.id === info.playerId);
+  if (!player) return;
+
+  // In active matches, give 7 SECONDS buffer window so temporary Wi-Fi blips don't ruin the game!
+  if (room.state === 'playing') {
+    player.isDisconnected = true;
+    const bufferSeconds = 7;
+    (player as any).disconnectDeadline = Date.now() + bufferSeconds * 1000;
+
+    // Broadcast to room that player is temporarily disconnected with a 7s buffer
+    broadcastToRoom(room, 'player:disconnected_grace', {
+      playerId: player.id,
+      playerName: player.name,
+      bufferSeconds
+    });
+    broadcastToRoom(room, 'room:sync', { room: sanitizeRoom(room) });
+
+    if (disconnectGraceTimers.has(player.id)) {
+      clearTimeout(disconnectGraceTimers.get(player.id)!);
+    }
+
+    const timer = setTimeout(() => {
+      disconnectGraceTimers.delete(player.id);
+      finalizePlayerDisconnect(room.code, player.id);
+    }, bufferSeconds * 1000);
+
+    disconnectGraceTimers.set(player.id, timer);
+    return;
+  }
+
+  // In lobby state, allow 5 seconds buffer in case of quick page reload
+  if (room.state === 'lobby') {
+    player.isDisconnected = true;
+    broadcastToRoom(room, 'room:sync', { room: sanitizeRoom(room) });
+
+    if (disconnectGraceTimers.has(player.id)) {
+      clearTimeout(disconnectGraceTimers.get(player.id)!);
+    }
+
+    const timer = setTimeout(() => {
+      disconnectGraceTimers.delete(player.id);
+      finalizePlayerDisconnect(room.code, player.id);
+    }, 5000);
+
+    disconnectGraceTimers.set(player.id, timer);
+    return;
+  }
+
+  finalizePlayerDisconnect(room.code, player.id);
+}
+
+function finalizePlayerDisconnect(roomCode: string, playerId: string) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+
+  const playerIdx = room.players.findIndex(p => p.id === playerId);
   if (playerIdx < 0) return;
 
   const wasCurrentTurn = room.currentTurnIndex === playerIdx;
@@ -895,7 +1150,7 @@ function handleClientDisconnect(ws: WebSocket) {
     rooms.delete(room.code);
   } else {
     // If host left, elect new host
-    if (room.hostId === info.playerId) {
+    if (room.hostId === playerId) {
       room.hostId = room.players[0].id;
       room.players[0].isHost = true;
     }
@@ -910,18 +1165,40 @@ function handleClientDisconnect(ws: WebSocket) {
         }
         room.winners = [room.players[0]];
         const winner = room.players[0];
-        if (winner.userId && users[winner.userId] && !winner.isBot) {
-          const u = users[winner.userId];
-          u.stats.wins++;
-          u.stats.gamesPlayed++;
-          u.stats.totalScore += 50;
-          saveUsers(users);
-          updateLeaderboardForUser(u);
+        const currentUsers = loadUsers();
+        let u: UserAccount | undefined;
+        if (winner.userId && currentUsers[winner.userId] && !winner.isBot) {
+          u = currentUsers[winner.userId];
+        } else if (!winner.isBot && !winner.id.startsWith('bot_')) {
+          u = Object.values(currentUsers).find(acc =>
+            (acc.username && acc.username.toLowerCase() === winner.name.toLowerCase()) ||
+            (acc.displayName && acc.displayName.toLowerCase() === winner.name.toLowerCase())
+          );
+          if (u) winner.userId = u.id;
         }
+
+        if (u) {
+          if (!u.stats) {
+            u.stats = { wins: 0, losses: 0, ties: 0, gamesPlayed: 0, boxesClaimed: 0, highestCombo: 0, totalScore: 0, winStreak: 0, bestWinStreak: 0 };
+          }
+          u.stats.wins = (u.stats.wins || 0) + 1;
+          u.stats.gamesPlayed = (u.stats.gamesPlayed || 0) + 1;
+          u.stats.boxesClaimed = (u.stats.boxesClaimed || 0) + (winner.score || 0);
+          u.stats.totalScore = (u.stats.totalScore || 0) + (winner.score || 0) * 10 + 50;
+          u.stats.winStreak = (u.stats.winStreak || 0) + 1;
+          if (u.stats.winStreak > (u.stats.bestWinStreak || 0)) {
+            u.stats.bestWinStreak = u.stats.winStreak;
+          }
+          saveUsers(currentUsers);
+          users = currentUsers;
+        }
+        const freshLeaderboard = getComputedLeaderboard();
+        saveLeaderboard(freshLeaderboard);
+        leaderboard = freshLeaderboard;
         broadcastToRoom(room, 'game:over', {
           winners: room.winners,
           room: sanitizeRoom(room),
-          leaderboard
+          leaderboard: freshLeaderboard
         });
       } else {
         // 2 or more players remain: the game CONTINUES without the disconnected player!
@@ -940,22 +1217,34 @@ function handleClientDisconnect(ws: WebSocket) {
 }
 
 // WebSocket Connection Management
-// Heartbeat to detect network drops promptly
+// Relaxed 15-second heartbeat with 2-strike tolerance prevents false-positive drops on healthy Wi-Fi
 const heartbeatInterval = setInterval(() => {
   for (const client of wss.clients) {
-    if ((client as any).isAlive === false) {
+    const customWs = client as any;
+    if (customWs.isAlive === false) {
+      customWs.missedPings = (customWs.missedPings || 0) + 1;
+      if (customWs.missedPings >= 2) {
+        handleClientDisconnect(client);
+        client.terminate();
+        continue;
+      }
+    }
+    customWs.isAlive = false;
+    try {
+      client.ping();
+    } catch {
       handleClientDisconnect(client);
       client.terminate();
-      continue;
     }
-    (client as any).isAlive = false;
-    client.ping();
   }
-}, 3000);
+}, 15000);
+
 wss.on('connection', (ws) => {
   (ws as any).isAlive = true;
+  (ws as any).missedPings = 0;
   ws.on('pong', () => {
     (ws as any).isAlive = true;
+    (ws as any).missedPings = 0;
   });
 
   let boundRoomCode: string | null = null;
@@ -1102,6 +1391,50 @@ wss.on('connection', (ws) => {
         broadcastLobbies();
       }
 
+      else if (event === 'room:reconnect') {
+        const { roomCode, playerId, userId } = payload;
+        const cleanCode = (roomCode || '').trim().toUpperCase();
+        const room = rooms.get(cleanCode);
+
+        if (!room) {
+          sendToClient(ws, 'room:reconnect_failed', { message: 'Match concluded or room closed.' });
+          return;
+        }
+
+        const player = room.players.find(p => p.id === playerId || (userId && p.userId === userId));
+        if (!player) {
+          sendToClient(ws, 'room:reconnect_failed', { message: 'Player slot was released.' });
+          return;
+        }
+
+        // Cancel the 7-second disconnect timer!
+        if (disconnectGraceTimers.has(player.id)) {
+          clearTimeout(disconnectGraceTimers.get(player.id)!);
+          disconnectGraceTimers.delete(player.id);
+        }
+
+        // Rebind WebSocket to this room & player
+        boundRoomCode = cleanCode;
+        boundPlayerId = player.id;
+        player.isDisconnected = false;
+        delete (player as any).disconnectDeadline;
+
+        clientRooms.set(ws, { roomCode: cleanCode, playerId: player.id });
+
+        // Restore game state to the reconnected player
+        sendToClient(ws, 'room:reconnected', {
+          room: sanitizeRoom(room),
+          yourPlayerId: player.id
+        });
+
+        // Notify room that player has returned successfully
+        broadcastToRoom(room, 'player:reconnected', {
+          playerId: player.id,
+          playerName: player.name
+        });
+        broadcastToRoom(room, 'room:sync', { room: sanitizeRoom(room) });
+      }
+
       else if (event === 'room:ready') {
         if (!boundRoomCode || !boundPlayerId) return;
         const room = rooms.get(boundRoomCode);
@@ -1143,6 +1476,7 @@ wss.on('connection', (ws) => {
 
         const p = room.players.find(pl => pl.id === boundPlayerId);
         if (p) {
+          if (payload.userId) p.userId = payload.userId;
           if (payload.name) p.name = payload.name.trim().substring(0, 18);
           if (payload.color) {
             const isTaken = room.players.some(other => other.id !== boundPlayerId && other.color.toLowerCase() === payload.color.toLowerCase());
@@ -1218,34 +1552,49 @@ wss.on('connection', (ws) => {
         const room = rooms.get(boundRoomCode);
         if (!room || room.hostId !== boundPlayerId || room.state !== 'lobby') return;
 
+        let dimensionChanged = false;
+        let prevMaxPlayers = room.maxPlayers;
+
         if (payload.maxPlayers) {
           room.maxPlayers = Math.min(Math.max(payload.maxPlayers, 2), 8);
         }
 
+        let targetRows = room.gridRows;
+        let targetCols = room.gridCols;
+
         // Enforce 7x7 or 8x8 if > 4 players or maxPlayers > 4
         if (room.players.length > 4 || room.maxPlayers > 4) {
           const target = payload.rows === 8 || payload.cols === 8 ? 8 : 7;
-          room.gridRows = target;
-          room.gridCols = target;
+          targetRows = target;
+          targetCols = target;
         } else {
-          if (payload.rows) room.gridRows = Math.min(Math.max(payload.rows, 3), 8);
-          if (payload.cols) room.gridCols = Math.min(Math.max(payload.cols, 3), 8);
+          if (payload.rows) targetRows = Math.min(Math.max(payload.rows, 3), 8);
+          if (payload.cols) targetCols = Math.min(Math.max(payload.cols, 3), 8);
         }
 
-        if (payload.turnTime !== undefined) room.turnTimeLimit = payload.turnTime;
-        room.totalBoxes = room.gridRows * room.gridCols;
+        if (targetRows !== room.gridRows || targetCols !== room.gridCols) {
+          room.gridRows = targetRows;
+          room.gridCols = targetCols;
+          room.totalBoxes = room.gridRows * room.gridCols;
+          const boardData = createBoardData(room.gridRows, room.gridCols);
+          room.hLines = boardData.hLines;
+          room.hLineOwners = boardData.hLineOwners;
+          room.hLineColors = boardData.hLineColors;
+          room.vLines = boardData.vLines;
+          room.vLineOwners = boardData.vLineOwners;
+          room.vLineColors = boardData.vLineColors;
+          room.boxes = boardData.boxes;
+          dimensionChanged = true;
+        }
 
-        const boardData = createBoardData(room.gridRows, room.gridCols);
-        room.hLines = boardData.hLines;
-        room.hLineOwners = boardData.hLineOwners;
-        room.hLineColors = boardData.hLineColors;
-        room.vLines = boardData.vLines;
-        room.vLineOwners = boardData.vLineOwners;
-        room.vLineColors = boardData.vLineColors;
-        room.boxes = boardData.boxes;
+        if (payload.turnTime !== undefined) {
+          room.turnTimeLimit = payload.turnTime;
+        }
 
         broadcastToRoom(room, 'room:sync', { room: sanitizeRoom(room) });
-        broadcastLobbies();
+        if (dimensionChanged || prevMaxPlayers !== room.maxPlayers) {
+          broadcastLobbies();
+        }
       }
 
       else if (event === 'room:start') {

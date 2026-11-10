@@ -106,19 +106,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       {/* Top Banner / Room Code Pill */}
       <div className="flex flex-col sm:flex-row items-center justify-between p-4 bg-white border-2 border-[#EFEAE1] rounded-3xl shadow-[0_4px_16px_rgba(180,160,140,0.06)] gap-4">
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              sound.playClick();
-              onLeaveRoom();
-            }}
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-[#FAF7F2] hover:bg-[#FFF0F2] border-2 border-[#EFEAE1] hover:border-[#FFB7C5] text-[#7A7067] hover:text-[#D93856] font-bubbly font-bold text-xs transition-all active:scale-95 shadow-xs"
-            title="Back to Main Menu"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back</span>
-          </button>
-
           <div className="w-11 h-11 rounded-2xl bg-[#EAF6FD] border border-[#C5E7FA] flex items-center justify-center text-[#5BBFEA] font-bubbly font-bold text-lg">
             #
           </div>

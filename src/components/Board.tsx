@@ -67,11 +67,13 @@ export const Board: React.FC<BoardProps> = ({
       const isMobile = clientWidth < 640;
       // Scales dynamically when one or both sidebars (participants, chat) are minimized!
       const maxCap = expansionLevel === 2 ? 940 : expansionLevel === 1 || isExpanded ? 820 : 660;
-      const margin = isMobile ? 12 : 28;
-      const maxAvailable = Math.min(clientWidth - margin, clientHeight - margin, maxCap);
-      const safeSize = Math.max(maxAvailable, isMobile ? 240 : 300);
+      const margin = isMobile ? 8 : 24;
+      const availableHeight = clientHeight > 0 ? clientHeight - margin : 400;
+      const availableWidth = clientWidth > 0 ? clientWidth - margin : 400;
+      const maxAvailable = Math.min(availableWidth, availableHeight, maxCap);
+      const safeSize = Math.max(maxAvailable, 160);
 
-      const padding = Math.max(isMobile ? 22 : 36, safeSize * 0.075);
+      const padding = Math.max(isMobile ? 18 : 32, safeSize * 0.07);
       const usable = safeSize - padding * 2;
       const cells = Math.max(rows, cols);
       const cellSize = usable / cells;
@@ -194,6 +196,149 @@ export const Board: React.FC<BoardProps> = ({
     }, 1500);
   };
 
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [previewLine, setPreviewLine] = useState<{
+    type: 'h' | 'v';
+    r: number;
+    c: number;
+  } | null>(null);
+  const lastMoveTimeRef = useRef(0);
+
+  // Convert client viewport coordinates to SVG internal viewBox coordinates
+  const getSvgPoint = (clientX: number, clientY: number) => {
+    if (!svgRef.current) return null;
+    const rect = svgRef.current.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    const scaleX = gridSize.boardSize / rect.width;
+    const scaleY = gridSize.boardSize / rect.height;
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    };
+  };
+
+  // Find nearest unplaced line segment given SVG coordinate (x, y)
+  // Especially helpful on mobile phones and dense grids (e.g. 6x6, 7x7, 8x8)
+  const findNearestLine = (x: number, y: number) => {
+    let nearest: { type: 'h' | 'v'; r: number; c: number; dist: number } | null = null;
+    const maxSnapDist = gridSize.cellSize * 0.72; // Generous snap radius for effortless targeting
+
+    // Check all unplaced horizontal lines
+    for (let r = 0; r <= rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (room.hLines[r]?.[c]) continue; // already drawn
+        const p1 = getDotCoords(r, c);
+        const p2 = getDotCoords(r, c + 1);
+
+        let dist = 0;
+        if (x < p1.x) {
+          dist = Math.hypot(x - p1.x, y - p1.y);
+        } else if (x > p2.x) {
+          dist = Math.hypot(x - p2.x, y - p2.y);
+        } else {
+          dist = Math.abs(y - p1.y);
+        }
+
+        if (dist <= maxSnapDist && (!nearest || dist < nearest.dist)) {
+          nearest = { type: 'h', r, c, dist };
+        }
+      }
+    }
+
+    // Check all unplaced vertical lines
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c <= cols; c++) {
+        if (room.vLines[r]?.[c]) continue; // already drawn
+        const p1 = getDotCoords(r, c);
+        const p2 = getDotCoords(r + 1, c);
+
+        let dist = 0;
+        if (y < p1.y) {
+          dist = Math.hypot(x - p1.x, y - p1.y);
+        } else if (y > p2.y) {
+          dist = Math.hypot(x - p2.x, y - p2.y);
+        } else {
+          dist = Math.abs(x - p1.x);
+        }
+
+        if (dist <= maxSnapDist && (!nearest || dist < nearest.dist)) {
+          nearest = { type: 'v', r, c, dist };
+        }
+      }
+    }
+
+    return nearest ? { type: nearest.type, r: nearest.r, c: nearest.c } : null;
+  };
+
+  const executeMove = (type: 'h' | 'v', r: number, c: number) => {
+    const now = Date.now();
+    if (now - lastMoveTimeRef.current < 250) return;
+    if (!isMyTurn) return;
+
+    if (type === 'h' && room.hLines[r]?.[c]) return;
+    if (type === 'v' && room.vLines[r]?.[c]) return;
+
+    lastMoveTimeRef.current = now;
+    setPreviewLine(null);
+    handleLineClick(type, r, c);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!isMyTurn) {
+      if (previewLine) setPreviewLine(null);
+      return;
+    }
+    const pt = getSvgPoint(e.clientX, e.clientY);
+    if (!pt) return;
+    const match = findNearestLine(pt.x, pt.y);
+    setPreviewLine(match);
+  };
+
+  const handlePointerLeave = () => {
+    setPreviewLine(null);
+  };
+
+  const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!isMyTurn) return;
+    const pt = getSvgPoint(e.clientX, e.clientY);
+    // CRITICAL: Always prioritize previewLine so what the user sees is 100% what gets selected!
+    const target = previewLine || (pt ? findNearestLine(pt.x, pt.y) : null);
+    if (target) {
+      executeMove(target.type, target.r, target.c);
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (!isMyTurn) return;
+    const touch = e.touches[0];
+    if (touch) {
+      const pt = getSvgPoint(touch.clientX, touch.clientY);
+      if (pt) {
+        const match = findNearestLine(pt.x, pt.y);
+        setPreviewLine(match);
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (!isMyTurn) return;
+    const touch = e.touches[0];
+    if (touch) {
+      const pt = getSvgPoint(touch.clientX, touch.clientY);
+      if (pt) {
+        const match = findNearestLine(pt.x, pt.y);
+        setPreviewLine(match);
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (!isMyTurn) return;
+    if (previewLine) {
+      executeMove(previewLine.type, previewLine.r, previewLine.c);
+    }
+  };
+
   const handleLineClick = (type: 'h' | 'v', r: number, c: number) => {
     if (!isMyTurn) return;
 
@@ -256,6 +401,9 @@ export const Board: React.FC<BoardProps> = ({
           60% { stroke-width: 14px; opacity: 1; }
           100% { stroke-width: 11px; opacity: 1; }
         }
+        @keyframes previewDash {
+          to { stroke-dashoffset: -28; }
+        }
       `}</style>
 
       {/* Particle Canvas */}
@@ -295,10 +443,17 @@ export const Board: React.FC<BoardProps> = ({
         style={{ width: gridSize.boardSize, height: gridSize.boardSize }}
       >
         <svg
+          ref={svgRef}
           width={gridSize.boardSize - 24}
           height={gridSize.boardSize - 24}
-          className="w-full h-full"
+          className="w-full h-full touch-none cursor-pointer"
           viewBox={`0 0 ${gridSize.boardSize} ${gridSize.boardSize}`}
+          onClick={handleSvgClick}
+          onPointerMove={handlePointerMove}
+          onPointerLeave={handlePointerLeave}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         >
           {/* 1. Captured Boxes (Pastel Fill with Smooth Pop) */}
           {room.boxes.map((row, r) =>
@@ -375,7 +530,7 @@ export const Board: React.FC<BoardProps> = ({
 
               return (
                 <g key={`hline-${r}-${c}`}>
-                  {/* Click hit area: NO distracting hover preview lines */}
+                  {/* Click / tap hit area with snap preview on hover */}
                   {!isDrawn && isMyTurn && (
                     <line
                       x1={p1.x}
@@ -383,11 +538,16 @@ export const Board: React.FC<BoardProps> = ({
                       x2={p2.x}
                       y2={p2.y}
                       stroke="transparent"
-                      strokeWidth="40"
+                      strokeWidth={Math.min(26, Math.max(14, gridSize.cellSize * 0.55))}
                       strokeLinecap="round"
-                      className="cursor-pointer touch-manipulation"
-                      style={{ touchAction: 'manipulation' }}
-                      onClick={() => handleLineClick('h', r, c)}
+                      className="cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isMyTurn) return;
+                        // Always prioritize what is currently previewed to guarantee 100% precision!
+                        const target = previewLine || { type: 'h', r, c };
+                        executeMove(target.type, target.r, target.c);
+                      }}
                     />
                   )}
 
@@ -433,7 +593,7 @@ export const Board: React.FC<BoardProps> = ({
 
               return (
                 <g key={`vline-${r}-${c}`}>
-                  {/* Click hit area: NO distracting hover preview lines */}
+                  {/* Click / tap hit area with snap preview on hover */}
                   {!isDrawn && isMyTurn && (
                     <line
                       x1={p1.x}
@@ -441,11 +601,16 @@ export const Board: React.FC<BoardProps> = ({
                       x2={p2.x}
                       y2={p2.y}
                       stroke="transparent"
-                      strokeWidth="40"
+                      strokeWidth={Math.min(26, Math.max(14, gridSize.cellSize * 0.55))}
                       strokeLinecap="round"
-                      className="cursor-pointer touch-manipulation"
-                      style={{ touchAction: 'manipulation' }}
-                      onClick={() => handleLineClick('v', r, c)}
+                      className="cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isMyTurn) return;
+                        // Always prioritize what is currently previewed to guarantee 100% precision!
+                        const target = previewLine || { type: 'v', r, c };
+                        executeMove(target.type, target.r, target.c);
+                      }}
                     />
                   )}
 
@@ -481,6 +646,48 @@ export const Board: React.FC<BoardProps> = ({
               );
             })
           )}
+
+          {/* 3.5. Real-Time Line Placement Preview */}
+          {previewLine && isMyTurn && (() => {
+            const p1 = getDotCoords(previewLine.r, previewLine.c);
+            const p2 = previewLine.type === 'h'
+              ? getDotCoords(previewLine.r, previewLine.c + 1)
+              : getDotCoords(previewLine.r + 1, previewLine.c);
+
+            return (
+              <g className="pointer-events-none transition-all">
+                {/* Luminous aura halo around targeted segment */}
+                <line
+                  x1={p1.x}
+                  y1={p1.y}
+                  x2={p2.x}
+                  y2={p2.y}
+                  stroke={myColor}
+                  strokeWidth="20"
+                  strokeLinecap="round"
+                  opacity="0.32"
+                />
+                {/* Energetic dashed line preview in player's custom color */}
+                <line
+                  x1={p1.x}
+                  y1={p1.y}
+                  x2={p2.x}
+                  y2={p2.y}
+                  stroke={myColor}
+                  strokeWidth="8"
+                  strokeLinecap="round"
+                  strokeDasharray="8 6"
+                  opacity="0.95"
+                  style={{ animation: 'previewDash 0.75s linear infinite' }}
+                />
+                {/* Bright preview anchors for precision targeting on mobile & large grids */}
+                <circle cx={p1.x} cy={p1.y} r="9" fill={myColor} fillOpacity="0.45" />
+                <circle cx={p1.x} cy={p1.y} r="5.5" fill="#FFFFFF" stroke={myColor} strokeWidth="3" />
+                <circle cx={p2.x} cy={p2.y} r="9" fill={myColor} fillOpacity="0.45" />
+                <circle cx={p2.x} cy={p2.y} r="5.5" fill="#FFFFFF" stroke={myColor} strokeWidth="3" />
+              </g>
+            );
+          })()}
 
           {/* 4. Dots (Crisp rounded pegs) */}
           {Array.from({ length: rows + 1 }).map((_, r) =>

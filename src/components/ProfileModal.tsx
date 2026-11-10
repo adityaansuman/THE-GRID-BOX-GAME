@@ -164,10 +164,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   sound.playClick();
                   setShowAvatarPicker(true);
                 }}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-[#F2ECE3] border border-[#E8DFC8] rounded-xl text-xs font-bubbly font-bold text-[#5BBFEA] transition-all shadow-xs active:scale-95"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-[#F2ECE3] border border-[#E8DFC8] rounded-xl text-xs font-bubbly font-bold text-[#5BBFEA] transition-all shadow-xs active:scale-95 shrink-0 whitespace-nowrap"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                Change Avatar
+                <span>Avatar</span>
               </button>
             </div>
           </div>

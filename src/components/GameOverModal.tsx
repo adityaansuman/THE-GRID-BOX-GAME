@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Player, GameRoom } from '../types';
 import { sound } from '../utils/audio';
 import confetti from 'canvas-confetti';
@@ -17,7 +17,8 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   onPlayAgain,
   onLeaveRoom
 }) => {
-  if (room.state !== 'game_over') return null;
+  const [showModal, setShowModal] = useState(false);
+  const isGameOver = room.state === 'game_over';
 
   const sortedPlayers = [...room.players].sort((a, b) => b.score - a.score);
   const winners = room.winners || [sortedPlayers[0]];
@@ -25,37 +26,93 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   const isHost = room.hostId === myPlayerId;
 
   useEffect(() => {
+    if (!isGameOver) {
+      setShowModal(false);
+      return;
+    }
+
+    // 1. Immediately begin celebration sound and confetti rain
     sound.playVictoryFanfare();
 
-    // Gentle pastel confetti
-    const end = Date.now() + 2.5 * 1000;
+    const end = Date.now() + 5 * 1000;
     const colors = ['#5BBFEA', '#FF8DA1', '#58C99E', '#FF9F68', '#A389D4', '#F5B83D'];
 
-    (function frame() {
+    let frameId: number;
+    function frame() {
       confetti({
         particleCount: 3,
         angle: 60,
-        spread: 55,
+        spread: 60,
         origin: { x: 0 },
         colors
       });
       confetti({
         particleCount: 3,
         angle: 120,
-        spread: 55,
+        spread: 60,
         origin: { x: 1 },
         colors
       });
 
       if (Date.now() < end) {
-        requestAnimationFrame(frame);
+        frameId = requestAnimationFrame(frame);
       }
-    })();
-  }, []);
+    }
+    frame();
+
+    // 2. Delay the winning pop out screen by 2.5 seconds (2-3s after celebration starts)
+    const modalTimer = setTimeout(() => {
+      setShowModal(true);
+      // Secondary celebration burst when the podium pop out opens
+      confetti({
+        particleCount: 45,
+        spread: 75,
+        origin: { y: 0.6 },
+        colors
+      });
+    }, 2500);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      clearTimeout(modalTimer);
+    };
+  }, [isGameOver, room.code]);
+
+  if (!isGameOver) return null;
+
+  // Unobscured 2.5-second celebratory window allowing players to view the completed board
+  if (!showModal) {
+    return (
+      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none animate-bounce select-none">
+        <div className="px-5 py-2.5 bg-white/95 backdrop-blur-md rounded-2xl border-2 border-[#FDE7B3] shadow-[0_8px_30px_rgba(245,184,61,0.25)] flex items-center gap-3">
+          <span className="text-2xl">🏆</span>
+          <div className="text-left">
+            <div className="font-bubbly font-bold text-sm text-[#3D352E]">
+              {winners.length > 1
+                ? "It's a Tie Game!"
+                : isWinner
+                ? 'Victory! You Won!'
+                : `${winners[0]?.name} Won!`}
+            </div>
+            <div className="text-[10px] font-bubbly text-[#8C8074]">
+              Celebration in progress · Final scores in 2s
+            </div>
+          </div>
+          <span className="text-2xl">🎉</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-xs animate-fade-in select-none">
-      <div className="relative w-full max-w-lg bg-white border-2 border-[#EFEAE1] rounded-3xl shadow-xl p-6 text-[#3D352E] text-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs animate-fade-in select-none">
+      <style>{`
+        @keyframes winnerPop {
+          0% { transform: scale(0.75) translateY(24px); opacity: 0; }
+          100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+      `}</style>
+      <div className="relative w-full max-w-lg bg-white border-2 border-[#EFEAE1] rounded-3xl shadow-2xl p-6 text-[#3D352E] text-center animate-[winnerPop_0.4s_cubic-bezier(0.175,0.885,0.32,1.275)]">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-[#FFF9EC] border-2 border-[#FDE7B3] text-[#F5B83D] mb-3 shadow-xs">
           <Trophy className="w-8 h-8" />
         </div>

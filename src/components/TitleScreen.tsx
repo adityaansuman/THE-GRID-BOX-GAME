@@ -22,7 +22,7 @@ interface TitleScreenProps {
   guestColor: string;
   guestAvatar: string;
   onUpdateGuest: (name: string, color: string, avatar: string) => void;
-  onOpenAuth: () => void;
+  onOpenAuth: (mode?: 'login' | 'register', defaultUsername?: string) => void;
   onOpenProfile: () => void;
   onOpenLeaderboard: () => void;
   onQuickPlay: () => void;
@@ -32,6 +32,7 @@ interface TitleScreenProps {
   lobbies: PublicLobbyInfo[];
   isMuted: boolean;
   onToggleMute: () => void;
+  onLogout?: () => void;
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
@@ -49,7 +50,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   onPlayVsBot,
   lobbies,
   isMuted,
-  onToggleMute
+  onToggleMute,
+  onLogout
 }) => {
   const [joinCode, setJoinCode] = useState('');
   const [showHowToPlay, setShowHowToPlay] = useState(false);
@@ -177,54 +179,142 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </p>
         </div>
 
-        {/* Guest Nickname & Pastel Color Quick Customizer */}
-        {!user && (
-          <div className="w-full bg-white border-2 border-[#EFEAE1] rounded-3xl p-4 mb-4 shadow-[0_4px_16px_rgba(180,160,140,0.06)] flex items-center justify-between gap-3 text-left">
-            <div className="flex items-center gap-3">
+        {/* Profile Card: Cloud Account Synced vs Guest Player */}
+        {user ? (
+          <div className="w-full bg-white border-2 border-[#D7EEDF] rounded-3xl p-3 sm:p-4 mb-4 shadow-[0_4px_16px_rgba(88,201,158,0.1)] text-left flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playClick();
+                  onOpenProfile();
+                }}
+                className="w-11 sm:w-12 h-11 sm:h-12 rounded-2xl flex items-center justify-center text-xl sm:text-2xl border-2 shadow-xs hover:scale-105 active:scale-95 transition-all group relative cursor-pointer shrink-0"
+                style={{
+                  borderColor: user.color,
+                  backgroundColor: `${user.color}22`
+                }}
+                title="View or Edit Profile"
+              >
+                {user.avatar}
+                <span className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 border border-[#58C99E] text-[10px] shadow-xs">
+                  🟢
+                </span>
+              </button>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bubbly font-bold uppercase text-[#58C99E] flex items-center gap-1">
+                    <span>●</span> Synced Across Devices
+                  </span>
+                  <span className="text-[10px] text-[#A69B8F] truncate">(@{user.username})</span>
+                </div>
+                <div className="font-bubbly font-bold text-sm sm:text-base text-[#3D352E] truncate">
+                  {user.displayName}
+                </div>
+                <div className="text-[11px] font-bubbly text-[#8C8074] flex items-center gap-2 mt-0.5">
+                  <span className="text-[#F5B83D] font-bold">🏆 {user.stats.wins} Wins</span>
+                  <span>·</span>
+                  <span>⚡ {user.stats.totalScore} pts</span>
+                  <span>·</span>
+                  <span>🔥 {user.stats.bestWinStreak} streak</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playClick();
+                  onOpenProfile();
+                }}
+                className="font-bubbly text-xs font-bold text-[#5BBFEA] hover:text-[#49B5E3] px-3 py-1.5 bg-[#EAF6FD] hover:bg-[#DDF1FC] rounded-xl border border-[#C5E7FA] transition-all shrink-0 whitespace-nowrap active:scale-95 shadow-xs"
+              >
+                Edit Profile
+              </button>
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playClick();
+                    onLogout();
+                  }}
+                  className="font-bubbly text-[10px] text-[#A69B8F] hover:text-[#D93856] transition-colors text-center"
+                >
+                  Sign Out
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="w-full bg-white border-2 border-[#EFEAE1] rounded-3xl p-3 sm:p-4 mb-4 shadow-[0_4px_16px_rgba(180,160,140,0.06)] text-left space-y-2.5">
+            <div className="flex items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playClick();
+                    setShowAvatarPicker(true);
+                  }}
+                  className="w-10 sm:w-11 h-10 sm:h-11 rounded-2xl flex items-center justify-center text-lg sm:text-xl border shadow-xs hover:scale-105 active:scale-95 transition-all group relative cursor-pointer shrink-0"
+                  style={{
+                    borderColor: guestColor,
+                    backgroundColor: `${guestColor}22`
+                  }}
+                  title="Change Avatar Icon"
+                >
+                  {guestAvatar}
+                  <span className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 border border-[#EFEAE1] text-[9px] shadow-xs">
+                    ✨
+                  </span>
+                </button>
+                <div className="min-w-0 flex-1">
+                  <label className="text-[10px] text-[#E09A1E] uppercase font-bubbly font-bold block truncate">
+                    Guest Player (Local device only)
+                  </label>
+                  <input
+                    type="text"
+                    value={guestName}
+                    onChange={(e) => onUpdateGuest(e.target.value, guestColor, guestAvatar)}
+                    maxLength={16}
+                    className="w-full min-w-0 bg-transparent border-b-2 border-[#EFEAE1] focus:border-[#5BBFEA] text-xs sm:text-sm font-bubbly font-bold text-[#3D352E] focus:outline-none py-0.5 truncate"
+                    placeholder="Enter Nickname"
+                  />
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={() => {
                   sound.playClick();
                   setShowAvatarPicker(true);
                 }}
-                className="w-11 h-11 rounded-2xl flex items-center justify-center text-xl border shadow-xs hover:scale-105 active:scale-95 transition-all group relative cursor-pointer"
-                style={{
-                  borderColor: guestColor,
-                  backgroundColor: `${guestColor}22`
-                }}
-                title="Change Avatar Icon"
+                className="font-bubbly text-xs font-bold text-[#5BBFEA] hover:text-[#49B5E3] flex items-center gap-1 px-2.5 py-1.5 bg-[#EAF6FD] hover:bg-[#DDF1FC] rounded-xl border border-[#C5E7FA] transition-all shrink-0 whitespace-nowrap active:scale-95 shadow-xs"
+                title="Change your avatar emoji"
               >
-                {guestAvatar}
-                <span className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5 border border-[#EFEAE1] text-[10px]">
-                  ✨
-                </span>
+                <Sparkles className="w-3.5 h-3.5 text-[#5BBFEA]" />
+                <span>Avatar</span>
               </button>
-              <div>
-                <label className="text-[10px] text-[#A69B8F] uppercase font-bubbly font-bold block">
-                  Your Nickname
-                </label>
-                <input
-                  type="text"
-                  value={guestName}
-                  onChange={(e) => onUpdateGuest(e.target.value, guestColor, guestAvatar)}
-                  maxLength={16}
-                  className="bg-transparent border-b-2 border-[#EFEAE1] focus:border-[#5BBFEA] text-sm font-bubbly font-bold text-[#3D352E] focus:outline-none py-0.5"
-                  placeholder="Enter Nickname"
-                />
-              </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                sound.playClick();
-                setShowAvatarPicker(true);
-              }}
-              className="font-bubbly text-xs font-bold text-[#5BBFEA] hover:text-[#49B5E3] flex items-center gap-1.5 px-3 py-1.5 bg-[#EAF6FD] hover:bg-[#DDF1FC] rounded-xl border border-[#C5E7FA] transition-all"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Change Avatar</span>
-            </button>
+            {/* Cloud Sync Callout Banner for Guests */}
+            <div className="bg-[#FAF7F2] border border-[#EAE3D5] rounded-2xl p-2.5 flex items-center justify-between gap-2">
+              <div className="text-[11px] font-bubbly text-[#7A7067] leading-tight min-w-0">
+                <span className="font-bold text-[#3D352E]">Want to play on another device?</span>
+                <span className="block text-[10px] text-[#8C8074] truncate">Log in to sync your stats, rank & avatar across all phones & PCs.</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playClick();
+                  onOpenAuth('login', guestName);
+                }}
+                className="shrink-0 px-3 py-1.5 bg-[#5BBFEA] hover:bg-[#49B5E3] text-white font-bubbly font-bold text-[11px] rounded-xl shadow-xs transition-all active:scale-95 whitespace-nowrap"
+              >
+                Log In / Sync
+              </button>
+            </div>
           </div>
         )}
 

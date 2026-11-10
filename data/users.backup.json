@@ -1,0 +1,23 @@
+{
+  "usr_1794307742824_tx10e": {
+    "id": "usr_1794307742824_tx10e",
+    "username": "aansuman",
+    "passwordHash": "password123",
+    "displayName": "Aansuman",
+    "color": "#5BBFEA",
+    "avatar": "🎮",
+    "createdAt": 1794307742824,
+    "lastLoginAt": 1794307742824,
+    "stats": {
+      "wins": 0,
+      "losses": 0,
+      "ties": 0,
+      "gamesPlayed": 0,
+      "boxesClaimed": 0,
+      "highestCombo": 0,
+      "totalScore": 0,
+      "winStreak": 0,
+      "bestWinStreak": 0
+    }
+  }
+}

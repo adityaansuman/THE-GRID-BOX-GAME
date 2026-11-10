@@ -220,7 +220,7 @@ export const ParticipantList: React.FC<ParticipantListProps> = ({
                       />
                       <span className="text-[10px]">
                         {p.isDisconnected ? (
-                          <span className="text-[#FF8DA1] font-bold animate-pulse">Disconnected (40s)</span>
+                          <span className="text-[#FF8DA1] font-bold animate-pulse">Disconnected (reconnecting...)</span>
                         ) : isMe ? (
                           <span className="text-[#5BBFEA] font-bold">You</span>
                         ) : isTurn ? (

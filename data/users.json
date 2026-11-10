@@ -1,14 +1,13 @@
 {
-  "usr_g_1794048175053_if10r": {
-    "id": "usr_g_1794048175053_if10r",
-    "username": "genuine_player",
-    "email": "genuine_player@gmail.com",
-    "passwordHash": "google_oauth_authenticated",
-    "displayName": "Genuine Player",
+  "usr_1794307742824_tx10e": {
+    "id": "usr_1794307742824_tx10e",
+    "username": "aansuman",
+    "passwordHash": "password123",
+    "displayName": "Aansuman",
     "color": "#5BBFEA",
-    "avatar": "⚡",
-    "createdAt": 1794048175053,
-    "lastLoginAt": 1794048175053,
+    "avatar": "🎮",
+    "createdAt": 1794307742824,
+    "lastLoginAt": 1794307742824,
     "stats": {
       "wins": 0,
       "losses": 0,
